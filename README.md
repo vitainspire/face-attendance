@@ -225,7 +225,7 @@ the first time it starts, see step 7.)
 
 ```bash
 mkdir -p ~/app
-cp -r cloud-instance/*.py cloud-instance/static cloud-instance/ops/*.py cloud-instance/scripts ~/app/
+cp -r cloud-instance/*.py cloud-instance/static cloud-instance/ops/*.py cloud-instance/scripts cloud-instance/model_service_bundle ~/app/
 cp cloud-instance/ops/cftunnel_wrapper.sh ~/app/
 chmod +x ~/app/cftunnel_wrapper.sh
 

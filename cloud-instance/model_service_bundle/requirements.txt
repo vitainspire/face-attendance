@@ -1,0 +1,10 @@
+# School model-service deps — only what local_model_service.py + engines.py (sface
+# engine) actually import. No insightface (sface only uses cv2, not insightface — this
+# also avoids the opencv-python vs opencv-python-headless conflict insightface causes).
+# No sqlalchemy/pgserver either — this service is stateless.
+fastapi
+uvicorn[standard]
+opencv-python-headless
+numpy
+pillow
+python-multipart
