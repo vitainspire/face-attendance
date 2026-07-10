@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Attendance</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css?v=38">
+</head>
+<body>
+    <div class="glass-container">
+        <header>
+            <h1>Smart Attendance</h1>
+            <div id="user-bar" class="user-bar hidden">
+                <span id="user-label"></span>
+                <button id="btn-change-password" class="link-btn">Change Password</button>
+                <button id="btn-logout" class="link-btn">Logout</button>
+            </div>
+        </header>
+
+        <!-- ============ LOGIN ============ -->
+        <main id="login-view" class="view">
+            <h2>Sign In</h2>
+            <form id="login-form">
+                <div class="input-group">
+                    <label>Username</label>
+                    <input type="text" id="login_username" required placeholder="admin / teacher / parent_...">
+                </div>
+                <div class="input-group">
+                    <label>Password</label>
+                    <input type="password" id="login_password" required>
+                </div>
+                <button type="submit" class="primary-btn">Login</button>
+            </form>
+            <div id="login-error" class="result-box error-text hidden"></div>
+        </main>
+
+        <!-- ============ ADMIN ============ -->
+        <main id="admin-view" class="view hidden">
+            <div class="role-selector">
+                <div class="sidebar-brand">
+                    <div class="sidebar-brand-row">
+                        <span class="sidebar-brand-icon">S</span>
+                        <span class="sidebar-brand-title" style="font-size:1.1rem;">School</span>
+                    </div>
+                </div>
+                <button id="tab-register" class="active">Register Student</button>
+                <button id="tab-students">Manage Students</button>
+                <button id="tab-embeddings">Generate Embeddings</button>
+                <button id="tab-teachers">Manage Teachers</button>
+                <button id="tab-reports">Reports</button>
+                <button id="tab-classes">Manage Classes</button>
+                <button id="tab-storage">Photo Storage</button>
+                <button id="tab-recognition">Recognition Settings</button>
+                <button id="tab-events">Events</button>
+                <div class="sidebar-spacer"></div>
+                <button id="tab-admin-settings">Change Password</button>
+                <button id="tab-admin-logout">Logout</button>
+            </div>
+
+            <div class="main-content-col">
+                <div class="page-header-row">
+                    <div></div>
+                    <div class="page-header-icons">
+                        <div class="icon-btn" title="Notifications">&#128276;</div>
+                        <div class="profile-chip">
+                            <div class="profile-icon">&#128100;</div>
+                            <span id="admin-profile-name">Admin</span>
+                        </div>
+                    </div>
+                </div>
+
+            <!-- Register -->
+            <section id="admin-register" class="tab-panel">
+                <h2>Register New Student</h2>
+                <form id="register-form">
+                    <div class="input-group">
+                        <label>Student Name</label>
+                        <input type="text" id="reg_name" required placeholder="e.g. Rahul Kumar">
+                    </div>
+                    <div class="input-group">
+                        <label>Roll Number (assigned by admin)</label>
+                        <input type="text" id="reg_roll" required placeholder="e.g. 21CS101">
+                    </div>
+                    <div class="input-group">
+                        <label>Section</label>
+                        <select id="reg_section" class="styled-select" required>
+                            <option value="" disabled selected>Loading sections...</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="primary-btn">Register & Create Parent Login</button>
+                </form>
+
+                <!-- Provide Credentials -->
+                <div id="credentials-box" class="result-box success-box hidden">
+                    <h3>Parent Credentials (hand these to the parent)</h3>
+                    <p>Username: <b id="cred-username"></b></p>
+                    <p>Password: <b id="cred-password"></b></p>
+                    <p class="hint">Shown once. The parent uses these to log in and capture the student's photo.</p>
+                </div>
+                <div id="register-error" class="result-box error-text hidden"></div>
+            </section>
+
+            <!-- Manage Students (database view/edit/delete) -->
+            <section id="admin-students" class="tab-panel hidden">
+                <h2>Student Database</h2>
+                <div class="input-group">
+                    <label>Class</label>
+                    <select id="students_class" class="styled-select">
+                        <option value="" disabled selected>Select a class...</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label>Section</label>
+                    <select id="students_section" class="styled-select" disabled>
+                        <option value="" disabled selected>Select a section...</option>
+                    </select>
+                </div>
+                <button id="btn-find-students" class="primary-btn">Find Students</button>
+                <div id="students-table-wrap" class="table-wrap hidden">
+                    <table id="students-table" class="db-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th><th>Name</th><th>Roll</th><th>Sec</th>
+                                <th>Img</th><th>Emb</th><th>Att%</th><th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="students-tbody"></tbody>
+                    </table>
+                </div>
+                <div id="students-msg" class="result-box hidden"></div>
+
+                <h3 style="margin-top:32px">Deleted Students</h3>
+                <p class="hint">Deleting a student hides them and keeps their attendance history intact — restore
+                   them here any time.</p>
+                <button id="btn-load-deleted" class="secondary-btn">Show Deleted Students</button>
+                <div id="deleted-students-wrap" class="table-wrap hidden">
+                    <table id="deleted-students-table" class="db-table">
+                        <thead>
+                            <tr><th>ID</th><th>Name</th><th>Roll</th><th>Deleted At</th><th>Actions</th></tr>
+                        </thead>
+                        <tbody id="deleted-students-tbody"></tbody>
+                    </table>
+                </div>
+
+                <h3 style="margin-top:32px">Link an Additional Child to a Parent Account</h3>
+                <p class="hint">For families with more than one child at the school — links another student to
+                   an existing parent login, so they can switch between children on one dashboard.</p>
+                <form id="link-child-form" style="display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); align-items:end;">
+                    <div class="input-group" style="margin-bottom:0;">
+                        <label>Existing Parent Account (keeps working)</label>
+                        <select id="link_parent_username" class="styled-select" required>
+                            <option value="" disabled selected>Loading parent accounts...</option>
+                        </select>
+                    </div>
+                    <div class="input-group" style="margin-bottom:0;">
+                        <label>Child to Add to that Account</label>
+                        <select id="link_student_id" class="styled-select" required>
+                            <option value="" disabled selected>Loading students...</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="secondary-btn" style="margin-top:0">Link Child</button>
+                </form>
+                <div id="link-child-error" class="result-box error-text hidden"></div>
+                <div id="link-child-success" class="result-box success-box hidden"></div>
+            </section>
+
+            <!-- Embeddings -->
+            <section id="admin-embeddings" class="tab-panel hidden">
+                <h2>Embedding Orchestration</h2>
+                <p>Generate face embeddings for enrolled students. Pick a class &amp; section, or leave on "All sections". Every student in scope must have a photo first.</p>
+                <div class="input-group">
+                    <label>Class</label>
+                    <select id="embed_class" class="styled-select">
+                        <option value="" selected>All sections</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label>Section</label>
+                    <select id="embed_section" class="styled-select" disabled>
+                        <option value="" selected>All sections</option>
+                    </select>
+                </div>
+                <button id="btn-check-status" class="secondary-btn" style="margin-top:0">Refresh Status</button>
+                <div id="embed-status" class="result-box hidden"></div>
+                <button id="btn-generate" class="primary-btn" style="margin-top:16px">Generate Embeddings</button>
+                <div id="embed-result" class="result-box hidden"></div>
+            </section>
+
+            <!-- Manage Teachers -->
+            <section id="admin-teachers" class="tab-panel hidden">
+                <h2>Create Teacher Account</h2>
+                <form id="teacher-form">
+                    <div class="input-group">
+                        <label>Username</label>
+                        <input type="text" id="teacher_username" required placeholder="e.g. teacher_priya">
+                    </div>
+                    <div class="input-group">
+                        <label>Email (optional)</label>
+                        <input type="email" id="teacher_email" placeholder="priya@school.edu">
+                    </div>
+                    <button type="submit" class="primary-btn">Create Teacher Login</button>
+                </form>
+
+                <div id="teacher-credentials-box" class="result-box success-box hidden">
+                    <h3>Teacher Credentials (hand these to the teacher)</h3>
+                    <p>Username: <b id="teacher-cred-username"></b></p>
+                    <p>Password: <b id="teacher-cred-password"></b></p>
+                    <p class="hint">Shown once — save it now.</p>
+                </div>
+                <div id="teacher-error" class="result-box error-text hidden"></div>
+
+                <h3 style="margin-top:32px">Existing Teachers</h3>
+                <div id="teacher-reset-box" class="result-box success-box hidden"></div>
+                <div class="table-wrap">
+                    <table class="db-table">
+                        <thead>
+                            <tr><th>ID</th><th>Username</th><th>Email</th><th>Actions</th></tr>
+                        </thead>
+                        <tbody id="teachers-tbody"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Attendance Reports -->
+            <section id="admin-reports" class="tab-panel hidden">
+                <h2>Attendance Reports</h2>
+                <p>Export a detailed, per-record attendance log for a class &amp; section over a date range.</p>
+                <div class="input-group">
+                    <label>Class</label>
+                    <select id="report_class" class="styled-select">
+                        <option value="" disabled selected>Select a class...</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label>Section</label>
+                    <select id="report_section" class="styled-select" disabled>
+                        <option value="" disabled selected>Select a section...</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label>Subject (optional)</label>
+                    <input type="text" id="report_subject" placeholder="All">
+                </div>
+                <div class="input-group">
+                    <label>Start Date</label>
+                    <input type="date" id="report_start_date">
+                </div>
+                <div class="input-group">
+                    <label>End Date</label>
+                    <input type="date" id="report_end_date">
+                </div>
+                <div class="btn-row">
+                    <button id="btn-report-csv" class="secondary-btn" style="margin-top:0">Download CSV</button>
+                    <button id="btn-report-pdf" class="primary-btn" style="margin-top:0">Download PDF</button>
+                </div>
+                <div id="report-error" class="result-box error-text hidden"></div>
+            </section>
+
+            <!-- Manage Classes & Sections -->
+            <section id="admin-classes" class="tab-panel hidden">
+                <h2>Add Class</h2>
+                <form id="class-form">
+                    <div class="input-group">
+                        <label>Class Name</label>
+                        <input type="text" id="new_class_name" required placeholder="e.g. Class 5">
+                    </div>
+                    <button type="submit" class="primary-btn">Add Class</button>
+                </form>
+                <div id="class-error" class="result-box error-text hidden"></div>
+                <div id="class-success" class="result-box success-box hidden"></div>
+
+                <h2 style="margin-top:32px">Add Section</h2>
+                <form id="section-form">
+                    <div class="input-group">
+                        <label>Class</label>
+                        <select id="new_section_class" class="styled-select" required>
+                            <option value="" disabled selected>Select a class...</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>Section Name</label>
+                        <input type="text" id="new_section_name" required placeholder="e.g. Section C">
+                    </div>
+                    <button type="submit" class="primary-btn">Add Section</button>
+                </form>
+                <div id="section-error" class="result-box error-text hidden"></div>
+                <div id="section-success" class="result-box success-box hidden"></div>
+
+                <h3 style="margin-top:32px">Existing Classes &amp; Sections</h3>
+                <div class="table-wrap">
+                    <table class="db-table">
+                        <thead>
+                            <tr><th>Class</th><th>Sections</th></tr>
+                        </thead>
+                        <tbody id="classes-tbody"></tbody>
+                    </table>
+                </div>
+
+                <h2 style="margin-top:32px">Manage Subjects</h2>
+                <p class="hint">Subjects are per-class — every section within a class shares the same subject
+                   list. Nothing shows up for teachers to pick until you add it here.</p>
+                <div class="input-group">
+                    <label>Class</label>
+                    <select id="subjects_class" class="styled-select">
+                        <option value="" disabled selected>Select a class...</option>
+                    </select>
+                </div>
+                <form id="subject-form" style="display:flex; gap:12px; align-items:flex-end;">
+                    <div class="input-group" style="margin-bottom:0; flex:1;">
+                        <label>New Subject Name</label>
+                        <input type="text" id="new_subject_name" required placeholder="e.g. Mathematics">
+                    </div>
+                    <button type="submit" class="primary-btn" style="margin-top:0">Add Subject</button>
+                </form>
+                <div id="subject-error" class="result-box error-text hidden"></div>
+                <ul id="subjects-list" class="styled-list" style="margin-top:16px;"></ul>
+
+                <h2 style="margin-top:32px">Teacher Assignments</h2>
+                <p class="hint">Assign a teacher to a subject in a section — once anyone is assigned to a
+                   subject there, only assigned teacher(s) can take attendance or approve leave requests for
+                   it. A subject with nobody assigned stays open to any teacher, same as before this feature
+                   existed.</p>
+                <form id="assignment-form" style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
+                    <div class="input-group" style="margin-bottom:0;">
+                        <label>Class</label>
+                        <select id="assign_class" class="styled-select" required>
+                            <option value="" disabled selected>Select a class...</option>
+                        </select>
+                    </div>
+                    <div class="input-group" style="margin-bottom:0;">
+                        <label>Section</label>
+                        <select id="assign_section" class="styled-select" required disabled>
+                            <option value="" disabled selected>Select a class first...</option>
+                        </select>
+                    </div>
+                    <div class="input-group" style="margin-bottom:0;">
+                        <label>Subject</label>
+                        <select id="assign_subject" class="styled-select" required disabled>
+                            <option value="" disabled selected>Select a section first...</option>
+                        </select>
+                    </div>
+                    <div class="input-group" style="margin-bottom:0;">
+                        <label>Teacher</label>
+                        <select id="assign_teacher" class="styled-select" required>
+                            <option value="" disabled selected>Select a teacher...</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="primary-btn" style="margin-top:0">Assign</button>
+                </form>
+                <div id="assignment-error" class="result-box error-text hidden"></div>
+                <ul id="assignments-list" class="styled-list" style="margin-top:16px;"></ul>
+            </section>
+
+            <!-- Photo Storage (per-school S3 bucket) -->
+            <section id="admin-storage" class="tab-panel hidden">
+                <h2>Photo Storage</h2>
+                <p class="hint">Student photos are stored in your own private storage bucket, not shared with any
+                   other school. Follow these steps once to set it up (about 5 minutes) — you won't need to do
+                   this again unless you want to change buckets later.</p>
+
+                <div id="storage-current-status" class="result-box" style="margin-bottom:24px;"></div>
+
+                <div class="result-box" style="margin-bottom:16px;">
+                    <p><b>Step 1 — Create a storage bucket</b></p>
+                    <p class="hint">1. Go to <b>aws.amazon.com/s3</b> and sign in (or create a free AWS account if you don't have one).</p>
+                    <p class="hint">2. Search for "S3" at the top and open it.</p>
+                    <p class="hint">3. Click <b>Create bucket</b>. Give it any unique name (e.g. <code>yourschoolname-photos</code>). Leave all other settings as the default. Click <b>Create bucket</b> at the bottom.</p>
+                </div>
+
+                <div class="result-box" style="margin-bottom:16px;">
+                    <p><b>Step 2 — Create an access key for this bucket</b></p>
+                    <p class="hint">1. Search for "IAM" at the top and open it.</p>
+                    <p class="hint">2. Click <b>Users</b> (left menu) → <b>Create user</b>. Give it any name (e.g. <code>attendance-app</code>) → click through to <b>Create user</b>.</p>
+                    <p class="hint">3. Click on the user you just created → the <b>Permissions</b> tab → <b>Add permissions</b> → <b>Attach policies directly</b> → search for and check <b>AmazonS3FullAccess</b> → <b>Add permissions</b>.</p>
+                    <p class="hint">4. Still on that user's page, click the <b>Security credentials</b> tab → scroll to <b>Access keys</b> → <b>Create access key</b> → choose <b>"Application running outside AWS"</b> → <b>Next</b> → <b>Create access key</b>.</p>
+                    <p class="hint">5. Copy the <b>Access key</b> and <b>Secret access key</b> shown — this is the only time the secret key is ever shown. Paste both below.</p>
+                </div>
+
+                <div class="result-box">
+                    <p><b>Step 3 — Enter it here</b></p>
+                    <form id="s3-settings-form">
+                        <div class="input-group">
+                            <label>Access Key</label>
+                            <input type="text" id="s3_access_key" required placeholder="AKIA...">
+                        </div>
+                        <div class="input-group">
+                            <label>Secret Access Key</label>
+                            <input type="password" id="s3_secret_key" required placeholder="Shown only once by AWS — paste it now">
+                        </div>
+                        <div class="input-group">
+                            <label>Bucket Name</label>
+                            <input type="text" id="s3_bucket_name" required placeholder="e.g. yourschoolname-photos">
+                        </div>
+                        <div class="input-group">
+                            <label>Region</label>
+                            <input type="text" id="s3_region" placeholder="e.g. us-east-1 (shown next to your bucket name in S3)">
+                        </div>
+                        <div id="s3-settings-error" class="result-box error-text hidden"></div>
+                        <div id="s3-settings-success" class="result-box success-box hidden"></div>
+                        <button type="submit" class="primary-btn">Save Storage Settings</button>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Recognition Settings (per-school auto-check threshold) -->
+            <section id="admin-recognition" class="tab-panel hidden">
+                <h2>Recognition Settings</h2>
+                <p class="hint">Controls how confident the camera needs to be before a student is automatically
+                   checked as present on the teacher's attendance checklist. This does NOT make recognition itself
+                   more or less accurate — it only changes how much the teacher is asked to double-check.</p>
+
+                <div id="recognition-current-status" class="result-box" style="margin-bottom:24px;"></div>
+
+                <div class="result-box">
+                    <div class="input-group">
+                        <label>Auto-Check Confidence Threshold: <span id="recognition-threshold-display">90%</span></label>
+                        <input type="range" id="recognition_threshold" min="50" max="99" value="90" style="width:100%; accent-color: var(--primary);">
+                        <p class="hint" style="margin-top:8px;">
+                            <b>Lower (e.g. 70%)</b> — more students get auto-checked present, but more risk of a wrong
+                            auto-check slipping through unnoticed.<br>
+                            <b>Higher (e.g. 95%)</b> — fewer wrong auto-checks, but more students will need the
+                            teacher to manually confirm or check them.
+                        </p>
+                    </div>
+                    <div id="recognition-settings-error" class="result-box error-text hidden"></div>
+                    <div id="recognition-settings-success" class="result-box success-box hidden"></div>
+                    <button type="button" id="btn-save-recognition" class="primary-btn">Save Threshold</button>
+                </div>
+            </section>
+
+            <!-- Events / Announcements -->
+            <section id="admin-events" class="tab-panel hidden">
+                <h2>Events &amp; Announcements</h2>
+                <p class="hint">Shown to parents on their dashboard's "Upcoming Event" card, soonest first.</p>
+                <div class="dash-card" style="max-width: 520px; margin-bottom: 24px;">
+                    <form id="event-form" style="display: grid; gap: 12px;">
+                        <div class="input-group" style="margin-bottom: 0;">
+                            <label>Title</label>
+                            <input type="text" id="event_title" required placeholder="e.g. Annual Sports Day">
+                        </div>
+                        <div class="input-group" style="margin-bottom: 0;">
+                            <label>Date</label>
+                            <input type="date" id="event_date" required class="styled-select">
+                        </div>
+                        <div class="input-group" style="margin-bottom: 0;">
+                            <label>Description (optional)</label>
+                            <input type="text" id="event_description" placeholder="e.g. Starts 9 AM, main ground">
+                        </div>
+                        <button type="submit" class="primary-btn" style="margin: 0;">Add Event</button>
+                    </form>
+                    <div id="event-error" class="result-box error-text hidden" style="margin-top:12px;"></div>
+                </div>
+                <div class="dash-card">
+                    <h3 style="margin-top:0">All Events</h3>
+                    <ul id="events-list" class="styled-list"></ul>
+                </div>
+            </section>
+            </div>
+        </main>
+
+        <!-- ============ PARENT: CAPTURE ============ -->
+        <main id="parent-capture-view" class="view hidden">
+            <h2>Capture Student Photo</h2>
+            <p>First login — please record a short 3-second capture using your camera, turning your child's
+               face slightly (left / center / right) so we get several clear angles (not a passport scan).</p>
+            <video id="camera" autoplay playsinline class="camera-feed"></video>
+            <canvas id="capture-canvas" class="hidden"></canvas>
+            <img id="capture-preview" class="capture-preview hidden" alt="preview">
+            <div id="burst-progress" class="hidden" style="margin: 12px 0;">
+                <div style="background: rgba(255,255,255,0.08); border-radius: 8px; height: 10px; overflow: hidden;">
+                    <div id="burst-progress-bar" style="background: var(--primary); height: 100%; width: 0%; transition: width 0.15s linear;"></div>
+                </div>
+                <p id="burst-progress-text" class="hint" style="margin-top: 6px;">Capturing... 0 / 9</p>
+            </div>
+            <div id="burst-thumbs" class="hidden" style="display:flex; gap:6px; flex-wrap:wrap; margin: 12px 0;"></div>
+            <div class="btn-row">
+                <button id="btn-start-cam" class="secondary-btn" style="margin-top:0">Start Camera</button>
+                <button id="btn-snap" class="primary-btn hidden">Start 3-Second Capture</button>
+                <button id="btn-retake" class="secondary-btn hidden" style="margin-top:0">Retake</button>
+                <button id="btn-upload-photo" class="primary-btn hidden">Save</button>
+                <button id="btn-continue-anyway" class="secondary-btn hidden" style="margin-top:0">Continue to Dashboard Anyway</button>
+            </div>
+
+            <div class="divider">— or —</div>
+            <div class="input-group">
+                <label>Upload a photo from your phone (camera or gallery)</label>
+                <input type="file" id="parent_photo_file" accept="image/*" capture="user">
+            </div>
+            <button id="btn-upload-file" class="primary-btn">Upload Selected Photo</button>
+
+            <div id="capture-result" class="result-box hidden"></div>
+        </main>
+
+        <!-- ============ PARENT: DASHBOARD ============ -->
+        <main id="parent-dashboard-view" class="view hidden">
+            <div class="role-selector">
+                <div class="sidebar-brand">
+                    <div class="sidebar-brand-title">Parent Portal</div>
+                    <div class="sidebar-brand-subtitle">Academic Oversight</div>
+                </div>
+                <button id="tab-p-dashboard" class="active"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span>Dashboard</button>
+                <button id="tab-p-attendance"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>Attendance</button>
+                <button id="tab-p-leaves"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>Leaves</button>
+                <div class="sidebar-spacer"></div>
+                <button id="tab-p-settings"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg></span>Settings</button>
+                <button id="tab-p-support"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>Support</button>
+                <button id="tab-p-logout"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span>Logout</button>
+            </div>
+
+            <div id="child-switcher-wrap" class="input-group hidden" style="max-width:320px; margin: 24px 40px 0;">
+                <label>Viewing Child</label>
+                <select id="child-switcher" class="styled-select"></select>
+            </div>
+
+            <!-- Dashboard: at-a-glance summary -->
+            <section id="parent-p-dashboard" class="tab-panel">
+                <div class="page-header-row">
+                    <h2 id="p-student" style="margin-bottom:0;">Good morning</h2>
+                    <div class="page-header-icons">
+                        <button id="btn-notifications" class="icon-btn hidden" title="Notifications">🔔<span id="notif-badge" class="hidden" style="background:var(--error); color:#fff; border-radius:10px; padding:1px 6px; font-size:0.7em; position:absolute; top:-4px; right:-4px;">0</span></button>
+                        <div class="profile-icon">👤</div>
+                    </div>
+                </div>
+                <div class="stats">
+                    <div class="stat-box"><span id="p-pct">0%</span> Attendance</div>
+                    <div class="stat-box"><span id="p-present">0</span> Classes Present</div>
+                    <div class="stat-box"><span id="p-total" style="font-size: 0.9em;">0</span> Total Days & Classes</div>
+                </div>
+
+                <div class="dash-grid">
+                    <div class="dash-card">
+                        <h3 style="margin-top:0">Attendance Calendar</h3>
+                        <div id="parent-calendar"></div>
+                    </div>
+                    <div class="dash-card">
+                        <h3 id="p-today-title" style="margin-top:0">Today's Classes</h3>
+                        <ul id="p-today" class="styled-list"></ul>
+                    </div>
+                    <div class="dash-card">
+                        <h3 style="margin-top:0">Leave Management</h3>
+                        <button type="button" class="primary-btn" id="btn-p-goto-leaves" style="margin-bottom:16px;">Request Leave</button>
+                        <ul id="p-leave-list-summary" class="styled-list"></ul>
+                        <a href="#" id="p-leave-more-notice" class="hint hidden" style="display:block; margin-top:8px;"></a>
+                    </div>
+                </div>
+
+                <div class="dash-grid" style="grid-template-columns: 1.3fr 1fr;">
+                    <div class="dash-card">
+                        <h3 style="margin-top:0">Subject-wise Attendance</h3>
+                        <div id="p-subjects-progress"></div>
+                    </div>
+                    <div class="dash-card">
+                        <h3 style="margin-top:0">Upcoming Events</h3>
+                        <ul id="p-events-list" class="styled-list"></ul>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Attendance: full detail -->
+            <section id="parent-p-attendance" class="tab-panel hidden">
+                <h2>Attendance Detail</h2>
+                <div class="dash-card" style="margin-bottom: 24px;">
+                    <h3 style="margin-top:0">Subject-wise Attendance</h3>
+                    <div style="overflow-x: auto;">
+                        <table id="p-subjects" class="db-table" style="width:100%">
+                            <thead>
+                                <tr><th>Subject</th><th>This Month</th><th>This Year</th><th>Leave (Yr)</th></tr>
+                            </thead>
+                            <tbody id="p-subjects-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="dash-card">
+                    <h3 style="margin-top:0">Download My Attendance Record</h3>
+                    <div style="display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); align-items: end;">
+                        <div class="input-group" style="margin-bottom:0;">
+                            <label>Start Date</label>
+                            <input type="date" id="p_report_start_date" class="styled-select">
+                        </div>
+                        <div class="input-group" style="margin-bottom:0;">
+                            <label>End Date</label>
+                            <input type="date" id="p_report_end_date" class="styled-select">
+                        </div>
+                        <button id="btn-p-report-csv" class="secondary-btn" style="margin-top:0">Download CSV</button>
+                        <button id="btn-p-report-pdf" class="primary-btn" style="margin-top:0">Download PDF</button>
+                    </div>
+                    <div id="p-report-error" class="result-box error-text hidden" style="margin-top:12px"></div>
+                </div>
+            </section>
+
+            <!-- Leaves -->
+            <section id="parent-p-leaves" class="tab-panel hidden">
+                <h2>Leave Management</h2>
+                <div class="dash-card" style="max-width: 520px; margin-bottom: 24px;">
+                    <form id="leave-form" style="display: grid; gap: 12px;">
+                        <div class="input-group" style="margin-bottom: 0;">
+                            <label>Start Date</label>
+                            <input type="date" id="leave_start" required class="styled-select">
+                        </div>
+                        <div class="input-group" style="margin-bottom: 0;">
+                            <label>End Date</label>
+                            <input type="date" id="leave_end" required class="styled-select">
+                        </div>
+                        <div class="input-group" style="margin-bottom: 0;">
+                            <label>Reason</label>
+                            <input type="text" id="leave_reason" required>
+                        </div>
+                        <button type="submit" class="primary-btn" style="margin: 0;">Submit</button>
+                    </form>
+                </div>
+                <div class="dash-card">
+                    <h3 style="margin-top:0">Leave History</h3>
+                    <ul id="p-leave-list" class="styled-list"></ul>
+                </div>
+            </section>
+
+            <!-- Settings -->
+            <section id="parent-p-settings" class="tab-panel hidden">
+                <h2>Settings</h2>
+                <div class="dash-card" style="max-width: 420px;">
+                    <p class="hint" style="margin-top:0">Manage your account security.</p>
+                    <button type="button" class="primary-btn" id="btn-p-settings-change-password">Change Password</button>
+                </div>
+            </section>
+
+            <!-- Support -->
+            <section id="parent-p-support" class="tab-panel hidden">
+                <h2>Support</h2>
+                <div class="dash-card" style="max-width: 480px;">
+                    <p class="hint" style="margin-top:0">For help with the app or questions about your child's
+                       attendance, contact your school's administration office directly.</p>
+                </div>
+            </section>
+        </main>
+
+        <!-- ============ TEACHER ============ -->
+        <main id="teacher-view" class="view hidden">
+            <div class="role-selector">
+                <div class="sidebar-brand">
+                    <div class="sidebar-brand-row">
+                        <span class="sidebar-brand-icon">S</span>
+                        <span class="sidebar-brand-title" style="font-size:1.1rem;">School</span>
+                    </div>
+                </div>
+                <button id="tab-attendance" class="active">Take Attendance</button>
+                <button id="tab-analytics">Analytics</button>
+                <button id="tab-leaves">Leave Requests<span id="leave-pending-badge" class="hidden" style="background:var(--error); color:#fff; border-radius:10px; padding:1px 7px; margin-left:4px; font-size:0.8em;">0</span></button>
+                <div class="sidebar-spacer"></div>
+                <button id="tab-teacher-settings">Change Password</button>
+                <button id="tab-teacher-logout">Logout</button>
+            </div>
+
+            <div class="main-content-col">
+                <div class="page-header-row">
+                    <div></div>
+                    <div class="page-header-icons">
+                        <button id="btn-teacher-notifications" class="icon-btn hidden" title="Leave Alerts">&#128276;<span id="teacher-notif-badge" class="hidden" style="background:var(--error); color:#fff; border-radius:10px; padding:0 5px; font-size:0.65em; position:absolute; top:-2px; right:-2px;">0</span></button>
+                        <div class="profile-chip">
+                            <div class="profile-icon">&#128100;</div>
+                            <span id="teacher-profile-name">Teacher</span>
+                        </div>
+                    </div>
+                </div>
+
+            <section id="teacher-attendance" class="tab-panel">
+                <h2>Take Attendance (Group Photo)</h2>
+                <form id="attendance-form">
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+                        <div class="input-group" style="margin-bottom:0;">
+                            <label>Section</label>
+                            <select id="att_section_id" class="styled-select">
+                                <option value="" disabled selected>Loading sections...</option>
+                            </select>
+                        </div>
+                        <div class="input-group" style="margin-bottom:0;">
+                            <label>Subject</label>
+                            <select id="attendance_subject" class="styled-select">
+                                <option value="" disabled selected>Select a section first...</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="input-group" style="margin-top:20px;">
+                        <label>Group Photo (Classroom)</label>
+                        <label for="group_photo" id="dropzone" class="dropzone">
+                            <span class="dropzone-icon">&#9730;</span>
+                            <span id="dropzone-text">Drag and drop your classroom photo here, or click to select.<br>Supported formats: JPG, PNG</span>
+                        </label>
+                        <input type="file" id="group_photo" accept="image/*" required style="position:absolute; width:1px; height:1px; opacity:0; overflow:hidden;">
+                    </div>
+                    <div class="btn-row">
+                        <button type="submit" class="primary-btn">Scan Faces</button>
+                        <button type="button" id="btn-mark-all-present" class="accent-btn" style="margin-top:0">Mark All Present (Skip Photo)</button>
+                    </div>
+                </form>
+
+                <div id="loading" class="hidden">
+                    <div class="spinner"></div>
+                    <p>Running face recognition...</p>
+                </div>
+
+                <div id="attendance-result" class="result-box hidden">
+                    <div class="stats">
+                        <div class="stat-box"><span id="stat-detected">0</span> Detected</div>
+                        <div class="stat-box success"><span id="stat-recognized">0</span> Recognized</div>
+                        <div class="stat-box error"><span id="stat-unknown">0</span> Low Conf.</div>
+                    </div>
+                    <div class="btn-row" style="justify-content: space-between; align-items:center;">
+                        <h3 style="margin:0">Review &amp; Correct Attendance</h3>
+                        <div>
+                            <button type="button" id="btn-select-all" class="secondary-btn" style="margin-top:0">Select All</button>
+                            <button type="button" id="btn-deselect-all" class="secondary-btn" style="margin-top:0">Deselect All</button>
+                        </div>
+                    </div>
+                    <p class="hint">Uncheck anyone wrongly marked present; check anyone missed by the camera.</p>
+                    <ul id="attendance-checklist" class="styled-list"></ul>
+
+                    <div id="unmatched-faces-section" class="hidden">
+                        <h3>Unrecognized Faces — Assign Manually (Optional)</h3>
+                        <ul id="unmatched-faces-list" class="styled-list"></ul>
+                    </div>
+
+                    <button id="btn-submit-final" class="secondary-btn">Submit Attendance</button>
+                </div>
+
+                <div id="absent-box" class="result-box hidden">
+                    <h3>Absent Students</h3>
+                    <ul id="absent-list" class="styled-list"></ul>
+                </div>
+            </section>
+
+            <section id="teacher-analytics" class="tab-panel hidden">
+                <h2>Attendance Analytics</h2>
+                <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 24px;">
+                    <div class="input-group" style="margin-bottom:0;">
+                        <label>Section</label>
+                        <select id="analytics_section" class="styled-select">
+                            <option value="" disabled selected>Loading sections...</option>
+                        </select>
+                    </div>
+                    <div class="input-group" style="margin-bottom:0; margin-left: 16px;">
+                        <label>Subject Filter</label>
+                        <select id="analytics_subject" class="styled-select">
+                            <option value="All" selected>All Subjects</option>
+                        </select>
+                    </div>
+                    <div style="flex: 1; text-align: right;">
+                        <button id="btn-load-analytics" class="secondary-btn" style="margin:0;">Load</button>
+                        <button id="btn-export-csv" class="primary-btn" style="margin:0 0 0 10px;">Download CSV</button>
+                    </div>
+                </div>
+                <div class="analytics-grid">
+                    <div class="analytics-calendar-pane">
+                        <div id="teacher-calendar"></div>
+                    </div>
+                    <div class="analytics-lists-pane">
+                        <h3>Low Attendance (&lt; 75%)</h3>
+                        <div class="table-wrap scroll-table-wrap">
+                            <table class="db-table">
+                                <thead>
+                                    <tr><th>Student</th><th>%</th><th>Present</th><th>Absent</th><th>Leave</th></tr>
+                                </thead>
+                                <tbody id="low-list"></tbody>
+                            </table>
+                        </div>
+                        <h3>All Students</h3>
+                        <div class="table-wrap scroll-table-wrap">
+                            <table class="db-table">
+                                <thead>
+                                    <tr><th>Student</th><th>%</th><th>Present</th><th>Absent</th><th>Leave</th></tr>
+                                </thead>
+                                <tbody id="all-list"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="teacher-leaves" class="tab-panel hidden">
+                <h2>Pending Leave Requests</h2>
+                <div class="input-group">
+                    <label>Section</label>
+                    <select id="leave_section" class="styled-select">
+                        <option value="" disabled selected>Loading sections...</option>
+                    </select>
+                </div>
+                <button id="btn-load-leaves" class="secondary-btn" style="margin-top:0; margin-bottom: 24px;">Load Requests</button>
+                <ul id="t-leave-list" class="styled-list"></ul>
+            </section>
+            </div>
+        </main>
+    </div>
+
+    <!-- Change Password Modal (admin, teacher, and parent all use this) -->
+    <div id="change-password-modal" class="modal-overlay hidden">
+        <div class="modal-box">
+            <h3>Change Password</h3>
+            <div class="input-group">
+                <label>Current Password</label>
+                <input type="password" id="cp_current" required>
+            </div>
+            <div class="input-group">
+                <label>New Password</label>
+                <input type="password" id="cp_new" required minlength="6">
+            </div>
+            <div class="input-group">
+                <label>Confirm New Password</label>
+                <input type="password" id="cp_confirm" required minlength="6">
+            </div>
+            <div id="change-password-error" class="result-box error-text hidden"></div>
+            <div id="change-password-success" class="result-box success-box hidden"></div>
+            <div class="btn-row">
+                <button id="btn-cancel-change-password" class="secondary-btn" type="button">Cancel</button>
+                <button id="btn-submit-change-password" class="primary-btn" type="button">Update Password</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Student Modal -->
+    <div id="edit-modal" class="modal-overlay hidden">
+        <div class="modal-box">
+            <h3>Edit Student</h3>
+            <input type="hidden" id="edit_id">
+            <div class="input-group">
+                <label>Name</label>
+                <input type="text" id="edit_name">
+            </div>
+            <div class="input-group">
+                <label>Roll Number</label>
+                <input type="text" id="edit_roll">
+            </div>
+            <div class="input-group">
+                <label>Section</label>
+                <select id="edit_section" class="styled-select">
+                    <option value="" disabled selected>Loading sections...</option>
+                </select>
+            </div>
+            <div class="btn-row">
+                <button id="btn-save-edit" class="primary-btn">Save</button>
+                <button id="btn-cancel-edit" class="secondary-btn" style="margin-top:0">Cancel</button>
+            </div>
+            <div id="edit-error" class="result-box error-text hidden"></div>
+        </div>
+    </div>
+
+    <!-- Notification drawers live outside .glass-container (which has backdrop-filter,
+         creating a containing block for position:fixed descendants) so they stay pinned
+         to the viewport instead of scrolling with the dashboard. -->
+    <div id="notif-overlay" class="drawer-overlay"></div>
+    <div id="notifications-panel" class="drawer-panel">
+        <div class="drawer-header">
+            <h3>Notifications</h3>
+            <button id="btn-close-notifs" class="drawer-close">&times;</button>
+        </div>
+        <div id="notifications-list" class="drawer-body"></div>
+        <div class="drawer-footer">
+            <button id="btn-mark-notifs-read" class="secondary-btn" style="margin-top:0; width:100%;">Mark All Read</button>
+        </div>
+    </div>
+
+    <div id="teacher-notif-overlay" class="drawer-overlay"></div>
+    <div id="teacher-notifications-panel" class="drawer-panel">
+        <div class="drawer-header">
+            <h3>Pending Leave Requests</h3>
+            <button id="btn-close-teacher-notifs" class="drawer-close">&times;</button>
+        </div>
+        <div id="teacher-notifications-list" class="drawer-body"></div>
+    </div>
+
+    <script src="app.js?v=43"></script>
+</body>
+</html>

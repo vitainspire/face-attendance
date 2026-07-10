@@ -1,0 +1,17 @@
+[Unit]
+Description=Smart Attendance Backend (cloud)
+After=network.target
+
+[Service]
+User=ec2-user
+WorkingDirectory=/home/ec2-user/app
+Environment=PATH=/home/ec2-user/.local/bin:/usr/bin:/bin
+Environment=MODEL_TRANSPORT_MAX_DIM=2400
+EnvironmentFile=/etc/webapp.env
+ExecStart=/home/ec2-user/.local/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --limit-concurrency 100 --timeout-keep-alive 5
+Restart=always
+RestartSec=3
+MemoryMax=750M
+
+[Install]
+WantedBy=multi-user.target

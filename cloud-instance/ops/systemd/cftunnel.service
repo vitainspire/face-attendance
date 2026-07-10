@@ -1,0 +1,11 @@
+[Unit]
+Description=Cloudflare quick tunnel for webapp
+After=network.target
+
+[Service]
+ExecStart=/bin/bash /home/ec2-user/app/cftunnel_wrapper.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

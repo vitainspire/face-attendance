@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super Admin</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css?v=38">
+</head>
+<body>
+    <div class="glass-container" id="sa-container">
+        <!-- Login -->
+        <main id="sa-login-view" class="view">
+            <header><h1>Super Admin</h1></header>
+            <form id="sa-login-form">
+                <div class="input-group">
+                    <label>Username</label>
+                    <input type="text" id="sa_username" required>
+                </div>
+                <div class="input-group">
+                    <label>Password</label>
+                    <input type="password" id="sa_password" required>
+                </div>
+                <div id="sa-login-error" class="result-box error-text hidden"></div>
+                <button type="submit" class="primary-btn">Sign In</button>
+            </form>
+        </main>
+
+        <!-- Dashboard -->
+        <main id="sa-dashboard-view" class="view hidden">
+            <div class="role-selector">
+                <div class="sidebar-brand">
+                    <div class="sidebar-brand-row">
+                        <span class="sidebar-brand-icon">S</span>
+                        <span class="sidebar-brand-title" style="font-size:1.1rem;">Super Admin</span>
+                    </div>
+                </div>
+                <button class="active">Onboarding</button>
+                <div class="sidebar-spacer"></div>
+                <button id="btn-sa-logout">Logout</button>
+            </div>
+
+            <div class="main-content-col">
+                <div class="page-header-row">
+                    <h2 style="margin-bottom:0;">Onboarding Requests</h2>
+                    <div class="page-header-icons">
+                        <div class="profile-chip">
+                            <div class="profile-icon">&#128100;</div>
+                            <span>Super Admin</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tab-panel">
+                    <div class="dash-card" style="margin-bottom: 24px; max-width: 520px;">
+                        <h3 style="margin-top:0;">Create Onboarding Link</h3>
+                        <form id="sa-create-link-form">
+                            <div class="input-group">
+                                <label>School Name</label>
+                                <input type="text" id="sa_school_name" required>
+                            </div>
+                            <div class="input-group">
+                                <label>Contact Email (optional)</label>
+                                <input type="text" id="sa_contact_email">
+                            </div>
+                            <div id="sa-create-error" class="result-box error-text hidden"></div>
+                            <button type="submit" class="primary-btn">Generate Link</button>
+                        </form>
+                        <div id="sa-created-link-box" class="result-box success-box hidden" style="margin-top:16px;">
+                            <p>Send this link to the school:</p>
+                            <textarea id="sa-created-link" readonly rows="2" style="width:100%; font-family:monospace; background:#f8fafb; color:var(--text-main); border:1px solid var(--card-border); border-radius:8px; padding:12px; box-sizing:border-box;"></textarea>
+                        </div>
+                    </div>
+
+                    <div id="sa-reset-password-box" class="result-box success-box hidden" style="margin-bottom:16px;"></div>
+                    <button type="button" class="secondary-btn" id="btn-refresh-requests" style="width:auto; margin-top:0; margin-bottom:16px;">Refresh</button>
+                    <div class="table-wrap">
+                        <table class="db-table">
+                            <thead>
+                                <tr><th>School</th><th>Status</th><th>Elastic IP</th><th>Admin Login</th><th>Detail</th><th>Actions</th></tr>
+                            </thead>
+                            <tbody id="sa-requests-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="superadmin.js?v=7"></script>
+</body>
+</html>

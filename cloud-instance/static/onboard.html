@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>School Setup</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css?v=12">
+</head>
+<body>
+    <div class="bg-orb orb-1"></div>
+    <div class="bg-orb orb-2"></div>
+
+    <div class="glass-container" style="max-width: 640px;">
+        <header>
+            <h1>School Setup</h1>
+        </header>
+
+        <div id="ob-loading" style="text-align:center; color: var(--text-muted);">Loading...</div>
+
+        <!-- invited: the form -->
+        <div id="ob-form-view" class="hidden">
+            <p class="hint" id="ob-school-name" style="font-size:1.1em; color:var(--text-main); margin-bottom:24px;"></p>
+
+            <p style="font-weight:600; margin-bottom:4px;">Step 1 — give us access to your server</p>
+            <p class="hint" style="margin-bottom:16px;">Pick whichever matches your situation. We never see your
+               server's own key — this is a separate, limited one you can remove anytime.</p>
+
+            <div class="result-box" style="margin-bottom:16px;">
+                <p><b>Option A — I'm creating a new server</b> <span class="hint">(easiest)</span></p>
+                <p class="hint">1. Download this file (don't open it, just save it).</p>
+                <a id="btn-download-pubkey" download class="secondary-btn" style="display:inline-block; text-decoration:none; text-align:center; margin:6px 0 12px;">Download Key File</a>
+                <p class="hint">2. In AWS, go to <b>EC2 → Key Pairs → Import Key Pair</b>, give it any
+                   name, and upload the file you just downloaded.</p>
+                <p class="hint">3. When you launch your server, choose that key pair — that's it, no
+                   terminal needed. Once it's running, enter its IP address below.</p>
+            </div>
+
+            <div class="result-box" style="margin-bottom:24px;">
+                <p><b>Option B — I already have a server running</b></p>
+                <p class="hint">1. In AWS, go to <b>EC2 → Instances</b>, select your server, click
+                   <b>Connect → EC2 Instance Connect → Connect</b> — this opens a terminal in your
+                   browser, nothing to install.</p>
+                <p class="hint">2. Paste this single line in and press Enter:</p>
+                <textarea id="ob-pubkey-command" readonly rows="2" style="width:100%; font-family:monospace; font-size:0.8em; margin:6px 0; background:rgba(15,23,42,0.6); color:white; border:1px solid var(--glass-border); border-radius:8px; padding:12px; box-sizing:border-box;"></textarea>
+                <button type="button" class="secondary-btn" id="btn-copy-pubkey" style="margin-top:6px;">Copy Command</button>
+            </div>
+
+            <p class="hint" style="margin-bottom:24px;">Either way, also make sure your server's security group
+               allows inbound TCP on ports <b>22</b> (for us) and <b>9100</b> (for the attendance app).</p>
+
+            <form id="ob-form">
+                <div class="input-group">
+                    <label>Supabase Database Connection String</label>
+                    <input type="text" id="ob_supabase_url" required placeholder="postgresql://postgres:...@....supabase.co:5432/postgres">
+                </div>
+                <div class="input-group">
+                    <label>Elastic IP Address</label>
+                    <input type="text" id="ob_elastic_ip" required placeholder="e.g. 13.234.56.78">
+                </div>
+                <div class="input-group" style="display:flex; align-items:center; gap:10px;">
+                    <input type="checkbox" id="ob_pubkey_confirmed" style="width:auto;">
+                    <label style="margin:0; text-transform:none; font-size:0.95em;">I've added the public key above to my instance</label>
+                </div>
+                <div id="ob-form-error" class="result-box error-text hidden"></div>
+                <button type="submit" class="primary-btn">Submit for Review</button>
+            </form>
+        </div>
+
+        <!-- submitted: waiting for approval -->
+        <div id="ob-submitted-view" class="hidden" style="text-align:center;">
+            <div class="spinner"></div>
+            <p>Your request has been received and is awaiting approval.</p>
+            <p class="hint">This page will update automatically once it's reviewed — no need to refresh.</p>
+        </div>
+
+        <!-- provisioning: approved, setup running -->
+        <div id="ob-provisioning-view" class="hidden" style="text-align:center;">
+            <div class="spinner"></div>
+            <p>Setting up your school's instance...</p>
+            <p class="hint">This usually takes a few minutes. Feel free to leave this tab open — it'll update automatically.</p>
+        </div>
+
+        <!-- rejected: show reason, allow resubmit -->
+        <div id="ob-rejected-view" class="hidden">
+            <div class="result-box error-text">
+                <p><b>Your request needs a change before we can proceed:</b></p>
+                <p id="ob-reject-reason"></p>
+            </div>
+            <button type="button" class="primary-btn" id="btn-fix-resubmit">Fix and Resubmit</button>
+        </div>
+
+        <!-- failed: setup itself broke -->
+        <div id="ob-failed-view" class="hidden">
+            <div class="result-box error-text">
+                <p id="ob-failed-message"></p>
+            </div>
+            <button type="button" class="primary-btn" id="btn-failed-resubmit">Fix and Resubmit</button>
+        </div>
+
+        <!-- active: done, show login link + credentials -->
+        <div id="ob-active-view" class="hidden">
+            <div class="result-box success-box">
+                <p class="success-text"><b>You're all set!</b></p>
+                <p>Login page: <a id="ob-login-link" href="#" style="color: var(--primary);"></a></p>
+                <p id="ob-credentials-block">
+                    Admin username: <b id="ob-admin-username"></b><br>
+                    Admin password: <b id="ob-admin-password"></b><br>
+                    <span class="hint">Shown once — save this now.</span>
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <script src="onboard.js?v=1"></script>
+</body>
+</html>

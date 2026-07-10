@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+env/
+.venv/
+
+# Local dev database (never the real data — that lives in Supabase)
+*.db
+
+# Run output / logs — not source, no reuse value
+*.log
+
+# Secrets — never commit real credentials
+.env
+*.env

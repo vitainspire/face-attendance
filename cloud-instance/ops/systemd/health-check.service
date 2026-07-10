@@ -1,0 +1,9 @@
+[Unit]
+Description=Health check + alert email on failure
+
+[Service]
+Type=oneshot
+User=ec2-user
+WorkingDirectory=/home/ec2-user/app
+EnvironmentFile=/etc/webapp.env
+ExecStart=/usr/bin/python3 /home/ec2-user/app/check_health.py

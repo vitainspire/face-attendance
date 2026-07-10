@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily database backup (pg_dump, all active tenants + default)
+
+[Service]
+Type=oneshot
+User=ec2-user
+WorkingDirectory=/home/ec2-user/app
+EnvironmentFile=/etc/webapp.env
+Environment=PATH=/home/ec2-user/.local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/python3 /home/ec2-user/app/backup_databases.py

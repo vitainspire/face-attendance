@@ -1,0 +1,16 @@
+# Cloud instance deps — NO model libraries (no opencv/onnx/insightface/torch).
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg2-binary
+python-multipart
+python-jose
+bcrypt
+numpy
+scikit-learn
+requests
+pydantic
+cryptography
+paramiko
+fpdf2
+boto3

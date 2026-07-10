@@ -1,0 +1,16 @@
+[Unit]
+Description=Face Match Instance (cosine+KNN)
+After=network.target
+
+[Service]
+User=ec2-user
+WorkingDirectory=/home/ec2-user
+Environment=MATCHER_API_KEY=change-me
+Environment=MATCH_THRESHOLD=0.50
+Environment=PATH=/home/ec2-user/.local/bin:/usr/bin:/bin
+ExecStart=/home/ec2-user/.local/bin/uvicorn matcher_api:app --host 127.0.0.1 --port 8001
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
