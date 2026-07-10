@@ -130,7 +130,14 @@ MATCHER_URL                   = http://localhost:8001/match
 MATCHER_API_KEY                = <shared secret between webapp and matcher>
 PUBLIC_BASE_URL                = https://your-current-public-url
                                   (kept in sync automatically by cftunnel_wrapper.sh)
-ALERT_EMAIL_FROM / ALERT_EMAIL_APP_PASSWORD / ALERT_EMAIL_TO   (optional, for health-check alerts)
+
+# Optional
+SUPERADMIN_USERNAME / SUPERADMIN_PASSWORD    (skip to auto-generate on first boot — see below)
+ALERT_EMAIL_FROM / ALERT_EMAIL_APP_PASSWORD / ALERT_EMAIL_TO   (health-check email alerts)
+S3_BUCKET_NAME / AWS_DEFAULT_REGION           (only for the ORIGINAL/default school's own
+                                                photos, using the EC2 instance's IAM role —
+                                                every school onboarded afterward configures
+                                                their own S3 bucket through the admin UI instead)
 ```
 
 Each school's own Supabase URL, SSH deploy key, S3 credentials, and model-service API
@@ -147,7 +154,117 @@ is created automatically the first time it runs. The one-time `SUPERADMIN_USERNA
 `SUPERADMIN_PASSWORD` env vars (optional — a random password is generated and logged
 if omitted) bootstrap the first superadmin account the same way.
 
-## Deploying a change
+## Fresh deployment — setting up the central server from scratch
+
+This walks through going from a brand-new, empty server to a working, logged-in site.
+Everything below assumes Amazon Linux + an `ec2-user` account (any similar Linux distro
+works the same way, just adjust package-manager commands).
+
+### 1. Launch the server
+
+A `t3.micro`-class instance (1 GB RAM, 2 vCPU) is enough at small scale — this is what
+the app was actually built and load-tested against this project. Open inbound TCP 22
+(SSH) in the security group; port 8000 does **not** need to be open to the internet if
+you use the Cloudflare tunnel below (it proxies in without any inbound port).
+
+### 2. Install prerequisites and get the code
+
+The shipped systemd unit files call `uvicorn` at `/home/ec2-user/.local/bin/uvicorn` —
+that's where a plain `pip install --user` puts it, so install that way rather than into
+a venv (or edit the `ExecStart=` lines in `ops/systemd/*.service` to match if you'd
+rather use one):
+
+```bash
+sudo yum install -y python3 python3-pip git   # or apt on Debian/Ubuntu
+git clone https://github.com/<you>/<this-repo>.git
+cd <this-repo>/cloud-instance
+pip3 install --user -r requirements.txt
+```
+
+### 3. Get a control-plane database
+
+Create a free Supabase project (or point at any Postgres instance) — this holds the
+`schools` table and the *default/original* school's own data. Copy its connection
+string for `DATABASE_URL` below.
+
+### 4. Generate the required secrets
+
+```bash
+# JWT_SECRET_KEY
+python3 -c "import secrets; print(secrets.token_hex(32))"
+
+# CONTROL_PLANE_ENCRYPTION_KEY (must be a valid Fernet key, not just any random string)
+python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+# MATCHER_API_KEY (shared secret between webapp.service and matcher.service)
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+### 5. Write `/etc/webapp.env`
+
+```bash
+sudo tee /etc/webapp.env > /dev/null <<'EOF'
+DATABASE_URL=<your Supabase/Postgres connection string>
+JWT_SECRET_KEY=<generated above>
+CONTROL_PLANE_ENCRYPTION_KEY=<generated above>
+MATCHER_URL=http://localhost:8001/match
+MATCHER_API_KEY=<generated above>
+PUBLIC_BASE_URL=
+EOF
+sudo chmod 600 /etc/webapp.env
+```
+(`PUBLIC_BASE_URL` starts empty — the Cloudflare tunnel wrapper fills it in automatically
+the first time it starts, see step 7.)
+
+### 6. Copy the app into place and install the systemd services
+
+```bash
+mkdir -p ~/app
+cp -r cloud-instance/*.py cloud-instance/static cloud-instance/ops/*.py cloud-instance/scripts ~/app/
+cp cloud-instance/ops/cftunnel_wrapper.sh ~/app/
+chmod +x ~/app/cftunnel_wrapper.sh
+
+sudo cp cloud-instance/ops/systemd/*.service cloud-instance/ops/systemd/*.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+```
+
+### 7. Install the Cloudflare tunnel (no account/domain needed for a quick tunnel)
+
+```bash
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+  -o cloudflared && sudo install cloudflared /usr/local/bin/ && rm cloudflared
+```
+
+### 8. Start everything
+
+```bash
+sudo systemctl enable --now matcher.service
+sudo systemctl enable --now webapp.service
+sudo systemctl enable --now cftunnel.service
+# Optional, once you're ready for them:
+sudo systemctl enable --now health-check.timer
+sudo systemctl enable --now db-backup.timer
+```
+
+### 9. Confirm it's up, and get your first superadmin login
+
+```bash
+curl http://localhost:8000/health          # {"status":"ok",...}
+sudo journalctl -u webapp.service | grep bootstrap
+```
+If you didn't set `SUPERADMIN_USERNAME`/`SUPERADMIN_PASSWORD` in step 5, the very first
+startup auto-generates a password and prints it to the log **exactly once** — that
+`journalctl` line above is the only place you'll ever see it, so grab it now. Get your
+public URL either from that same log (`cftunnel_wrapper.sh` prints it as it syncs
+`PUBLIC_BASE_URL`) or `grep PUBLIC_BASE_URL /etc/webapp.env` a few seconds after startup.
+
+Visit `https://<your-tunnel-url>/superadmin.html` and log in — from there you can create
+an onboarding link for the first real school. That school's own server (their
+`model-service/`) gets deployed automatically over SSH once they submit their EC2 IP
+and Supabase URL through the onboarding page and you click "Accept" — you never
+manually copy `model-service/` anywhere yourself.
+
+## Deploying a code update (existing server)
 
 ```bash
 KEY=/path/to/your.pem
@@ -157,6 +274,3 @@ scp -i $KEY cloud-instance/*.py                 $HOST:~/app/
 scp -i $KEY -r cloud-instance/static/*          $HOST:~/app/static/
 ssh -i $KEY $HOST "sudo systemctl restart webapp.service matcher.service"
 ```
-
-A new school's `model-service/` is deployed automatically by `provisioning.py` — you
-never scp it by hand.

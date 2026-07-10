@@ -1,6 +1,14 @@
 """Analyze genuine vs impostor cosine-score distributions per section, to decide
-whether thresholds should be per-section or per-student, and what values fall out."""
+whether thresholds should be per-section or per-student, and what values fall out.
+
+Run from anywhere — e.g. `python3 scripts/analyze_thresholds.py` from cloud-instance/ —
+this script adds the parent directory to sys.path itself so `import database, models`
+(which live one level up, alongside main.py) resolves regardless of your cwd."""
+import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
 import database, models
 
