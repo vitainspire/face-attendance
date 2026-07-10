@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 User=ec2-user
-WorkingDirectory=/home/ec2-user
+WorkingDirectory=/home/ec2-user/app
 Environment=MATCHER_API_KEY=change-me
 Environment=MATCH_THRESHOLD=0.50
 Environment=PATH=/home/ec2-user/.local/bin:/usr/bin:/bin

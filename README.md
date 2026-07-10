@@ -130,6 +130,10 @@ MATCHER_URL                   = http://localhost:8001/match
 MATCHER_API_KEY                = <shared secret between webapp and matcher>
 PUBLIC_BASE_URL                = https://your-current-public-url
                                   (kept in sync automatically by cftunnel_wrapper.sh)
+MODEL_BACKEND                  = remote
+                                  (REQUIRED on the central/cloud server — without it this
+                                  defaults to "local", which imports opencv/cv2 and fails,
+                                  since the cloud instance deliberately has no model libs)
 
 # Optional
 SUPERADMIN_USERNAME / SUPERADMIN_PASSWORD    (skip to auto-generate on first boot — see below)
@@ -210,6 +214,7 @@ CONTROL_PLANE_ENCRYPTION_KEY=<generated above>
 MATCHER_URL=http://localhost:8001/match
 MATCHER_API_KEY=<generated above>
 PUBLIC_BASE_URL=
+MODEL_BACKEND=remote
 EOF
 sudo chmod 600 /etc/webapp.env
 ```
