@@ -1,4 +1,5 @@
 """Authentication helpers: password hashing, JWT, and role-based dependencies."""
+import ipaddress
 import os
 import secrets
 import string
@@ -167,6 +168,14 @@ def resolve_tenant(school_id: Optional[int]):
         supabase_url = provisioning.decrypt_secret(school.supabase_db_url_encrypted)
         db = database.get_tenant_sessionmaker(supabase_url)()
         if school.elastic_ip and school.model_service_api_key_encrypted:
+            # Defense-in-depth against SSRF, independent of the validation already done
+            # when this address was first submitted (see main.py's submit_onboarding) —
+            # this is the actual point where it's used to make an outbound request, so
+            # it's checked again here regardless of how it got into the database.
+            ip_obj = ipaddress.ip_address(school.elastic_ip)
+            if (ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local
+                    or ip_obj.is_reserved or ip_obj.is_multicast or ip_obj.is_unspecified):
+                raise HTTPException(status_code=503, detail="This school's model service is misconfigured")
             model_url = f"http://{school.elastic_ip}:9100"
             model_key = provisioning.decrypt_secret(school.model_service_api_key_encrypted)
     except HTTPException:

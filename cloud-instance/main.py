@@ -2651,6 +2651,16 @@ def _super_admin_login_impl(
         auth.record_login_failure(lockout_key)
         raise HTTPException(status_code=401, detail="Incorrect username or password")
     auth.clear_login_failures(lockout_key)
+    # A successful login means the bootstrap file (if any) has served its purpose —
+    # either this login used it (so it's now been retrieved) or the password was
+    # already changed since (so it's stale either way). Removing it bounds how long the
+    # one-time plaintext password sits on disk to "until first login", not indefinitely.
+    bootstrap_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bootstrap_superadmin_password.txt")
+    if os.path.exists(bootstrap_file):
+        try:
+            os.remove(bootstrap_file)
+        except OSError:
+            pass
     token = auth.create_access_token(
         {"sub": sa.username, "super_admin": True},
         expires_delta=datetime.timedelta(minutes=60 * 24),
