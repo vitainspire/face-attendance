@@ -9,6 +9,9 @@ detect_embed(bytes) -> [{bbox, embedding, crop}].
 import base64
 import io
 import os
+import ipaddress
+import socket
+from urllib.parse import urlparse
 
 MODE = os.environ.get("MODEL_BACKEND", "local")          # 'local' | 'remote'
 MODEL_URL = os.environ.get("MODEL_URL", "http://localhost:9100")
@@ -111,12 +114,63 @@ else:  # remote
             _info_cache[url] = entry
         return entry["data"]
 
+    def _is_public_ip_literal(hostname: str) -> bool:
+        try:
+            ip = ipaddress.ip_address(hostname)
+        except ValueError:
+            return False
+        return not (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        )
+
+    def _sanitize_model_url(raw_url: str) -> str:
+        parsed = urlparse(raw_url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("MODEL_URL/model_url must use http or https")
+        if not parsed.hostname:
+            raise ValueError("MODEL_URL/model_url must include a hostname")
+        if parsed.username or parsed.password:
+            raise ValueError("MODEL_URL/model_url must not include credentials")
+        if parsed.query or parsed.fragment:
+            raise ValueError("MODEL_URL/model_url must not include query/fragment")
+
+        host = parsed.hostname
+        if _is_public_ip_literal(host):
+            pass
+        else:
+            try:
+                infos = socket.getaddrinfo(host, parsed.port or 80, type=socket.SOCK_STREAM)
+            except socket.gaierror as exc:
+                raise ValueError(f"Unable to resolve model host: {host}") from exc
+            for info in infos:
+                resolved_ip = info[4][0]
+                ip = ipaddress.ip_address(resolved_ip)
+                if (
+                    ip.is_private
+                    or ip.is_loopback
+                    or ip.is_link_local
+                    or ip.is_multicast
+                    or ip.is_reserved
+                    or ip.is_unspecified
+                ):
+                    raise ValueError("MODEL_URL/model_url resolves to a non-public address")
+
+        netloc = host
+        if parsed.port is not None:
+            netloc = f"{host}:{parsed.port}"
+        return f"{parsed.scheme}://{netloc}"
+
     def _resolve(model_url, model_key):
         """Every function below takes an optional per-school override — the multi-tenant
         routes in main.py pass the CURRENT school's own model-service address (from
         auth.get_model_config) instead of the original school's global one. Omitting
         both keeps exactly the original single-tenant behavior."""
-        return model_url or MODEL_URL, model_key or MODEL_KEY
+        return _sanitize_model_url(model_url or MODEL_URL), model_key or MODEL_KEY
 
     def engine_name(model_url=None, model_key=None):
         return _get_info(*_resolve(model_url, model_key)).get("engine")
