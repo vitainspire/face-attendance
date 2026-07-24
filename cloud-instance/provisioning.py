@@ -66,6 +66,32 @@ def generate_deploy_keypair():
     return private_pem, public_openssh
 
 
+class _PinnedHostKeyPolicy:
+    """First connection to a school's instance: accept whatever host key it presents and
+    remember its fingerprint. Every connection after that: only proceed if the
+    fingerprint still matches. Doesn't (can't) verify the very first connection — there's
+    nothing to check a brand-new customer-provided server against yet — but catches a
+    man-in-the-middle or unexpected server swap on every connection after that."""
+
+    def __init__(self, school, db):
+        self.school = school
+        self.db = db
+
+    def missing_host_key(self, client, hostname, key):
+        import paramiko
+        fingerprint = key.get_fingerprint().hex()
+        if not self.school.deploy_host_key_fingerprint:
+            self.school.deploy_host_key_fingerprint = fingerprint
+            self.db.commit()
+        elif self.school.deploy_host_key_fingerprint != fingerprint:
+            raise paramiko.SSHException(
+                f"Host key for {hostname} does not match the one seen on a previous "
+                "connection — refusing to proceed. This could mean a man-in-the-middle, "
+                "or the school genuinely replaced their server; if the latter, clear "
+                "deploy_host_key_fingerprint for this school to re-pin, then retry."
+            )
+
+
 # --- Remote setup script (runs on the school's EC2 instance) --------------------------
 def _setup_script(model_key: str) -> str:
     return f"""set -e
@@ -171,7 +197,7 @@ def provision_school(school_id: int):
         import paramiko
         pkey = paramiko.RSAKey.from_private_key(io.StringIO(private_pem))
         client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.set_missing_host_key_policy(_PinnedHostKeyPolicy(school, db))
         client.connect(hostname=school.elastic_ip, username=DEPLOY_SSH_USER, pkey=pkey, timeout=30)
 
         try:
@@ -250,7 +276,7 @@ def set_service_running(school_id: int, running: bool):
         private_pem = decrypt_secret(school.deploy_private_key_encrypted)
         pkey = paramiko.RSAKey.from_private_key(io.StringIO(private_pem))
         client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.set_missing_host_key_policy(_PinnedHostKeyPolicy(school, db))
         client.connect(hostname=school.elastic_ip, username=DEPLOY_SSH_USER, pkey=pkey, timeout=30)
         try:
             action = "start" if running else "stop"

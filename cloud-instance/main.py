@@ -42,8 +42,16 @@ def _bootstrap_super_admin():
         db.add(models.SuperAdminUser(username=username, hashed_password=auth.get_password_hash(password)))
         db.commit()
         if not os.environ.get("SUPERADMIN_PASSWORD"):
-            print(f"[bootstrap] Created super-admin account '{username}' with password: {password}")
-            print("[bootstrap] Save this now — it will not be shown again.")
+            # Written to its own owner-only file rather than the general system log —
+            # journal entries are often readable more widely (any local monitoring tool,
+            # sometimes shipped to a centralized log service), while this file only
+            # readable by whoever owns the server process.
+            bootstrap_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bootstrap_superadmin_password.txt")
+            with open(bootstrap_file, "w") as f:
+                f.write(f"username: {username}\npassword: {password}\n")
+            os.chmod(bootstrap_file, 0o600)
+            print(f"[bootstrap] Created super-admin account '{username}' — "
+                  f"password written to {bootstrap_file} (save it now, then delete that file).")
     finally:
         db.close()
 
@@ -2927,9 +2935,19 @@ def submit_onboarding(token: str, req: SubmitOnboardingRequest, db: Session = De
     if not req.supabase_db_url.strip() or not req.elastic_ip.strip():
         raise HTTPException(status_code=400, detail="Supabase DB URL and Elastic IP are required")
     try:
-        ipaddress.ip_address(req.elastic_ip.strip())
+        ip_obj = ipaddress.ip_address(req.elastic_ip.strip())
     except ValueError:
         raise HTTPException(status_code=400, detail="Elastic IP must be a valid IP address")
+    # Must be a real, public address the central server can reach over the internet —
+    # never one that resolves to this server's own internal network or cloud metadata
+    # endpoint (e.g. 169.254.169.254), which would otherwise let a malicious/careless
+    # submission make this server send real photo data to an internal-only target (SSRF).
+    if (ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local
+            or ip_obj.is_reserved or ip_obj.is_multicast or ip_obj.is_unspecified):
+        raise HTTPException(
+            status_code=400,
+            detail="Elastic IP must be a public IP address, not a private/internal/reserved one",
+        )
 
     school.supabase_db_url_encrypted = provisioning.encrypt_secret(req.supabase_db_url.strip())
     school.elastic_ip = req.elastic_ip.strip()

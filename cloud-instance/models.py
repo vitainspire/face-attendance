@@ -245,6 +245,15 @@ class School(Base):
     elastic_ip = Column(String, nullable=True)
     supabase_db_url_encrypted = Column(String, nullable=True)
 
+    # SSH host key fingerprint seen on the FIRST successful connect to this school's
+    # instance — every later connect (retry, re-provision, start/stop service) must
+    # match it, or we refuse to proceed. Doesn't verify the very first connection (an
+    # inherent trust-on-first-use limit — there's nothing to check the first time a
+    # brand-new customer-provided server is ever seen), but catches a man-in-the-middle
+    # or unexpected server swap on every connection after that. Clear this field to
+    # deliberately re-pin (e.g. the school genuinely replaced their instance).
+    deploy_host_key_fingerprint = Column(String, nullable=True)
+
     model_service_api_key_encrypted = Column(String, nullable=True)
 
     # Whether the school's model service is currently stopped (suspended by the super
