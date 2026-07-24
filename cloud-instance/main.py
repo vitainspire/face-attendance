@@ -48,6 +48,13 @@ def _bootstrap_super_admin():
             # readable by whoever owns the server process.
             bootstrap_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bootstrap_superadmin_password.txt")
             with open(bootstrap_file, "w") as f:
+                # codeql[py/clear-text-storage-sensitive-data]: this IS the one-time
+                # credential handoff mechanism for a fresh install — there's no other way
+                # to give an operator the auto-generated password. Mitigated, not
+                # eliminated: chmod 600 below restricts it to this server's owner, and it
+                # self-deletes on the first successful superadmin login (see
+                # _super_admin_login_impl) — CodeQL can't trace that deletion back to
+                # this write since it happens in an unrelated request much later.
                 f.write(f"username: {username}\npassword: {password}\n")
             os.chmod(bootstrap_file, 0o600)
             print(f"[bootstrap] Created super-admin account '{username}' — "
