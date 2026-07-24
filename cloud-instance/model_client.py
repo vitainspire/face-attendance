@@ -9,6 +9,9 @@ detect_embed(bytes) -> [{bbox, embedding, crop}].
 import base64
 import io
 import os
+import ipaddress
+import socket
+from urllib.parse import urlparse
 
 MODE = os.environ.get("MODEL_BACKEND", "local")          # 'local' | 'remote'
 MODEL_URL = os.environ.get("MODEL_URL", "http://localhost:9100")
@@ -99,6 +102,37 @@ else:  # remote
     _INFO_TTL_SECONDS = 30  # re-check /health periodically so an engine swap on the
                             # school instance is picked up without restarting webapp
 
+    def _is_public_ip(ip_text: str) -> bool:
+        ip = ipaddress.ip_address(ip_text)
+        return not (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        )
+
+    def _validate_model_url(raw_url: str) -> str:
+        parsed = urlparse(raw_url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Model URL must use http or https")
+        if not parsed.hostname:
+            raise ValueError("Model URL must include a hostname")
+        if parsed.username or parsed.password:
+            raise ValueError("Model URL must not include credentials")
+
+        try:
+            addrinfos = socket.getaddrinfo(parsed.hostname, parsed.port, type=socket.SOCK_STREAM)
+        except socket.gaierror as e:
+            raise ValueError(f"Model URL hostname could not be resolved: {e}") from e
+
+        ips = {ai[4][0] for ai in addrinfos}
+        if not ips or any(not _is_public_ip(ip) for ip in ips):
+            raise ValueError("Model URL must resolve only to public IP addresses")
+
+        return raw_url.rstrip("/")
+
     def _get_info(url, key):
         entry = _info_cache.get(url)
         if not entry or (time.monotonic() - entry["fetched_at"]) > _INFO_TTL_SECONDS:
@@ -116,7 +150,8 @@ else:  # remote
         routes in main.py pass the CURRENT school's own model-service address (from
         auth.get_model_config) instead of the original school's global one. Omitting
         both keeps exactly the original single-tenant behavior."""
-        return model_url or MODEL_URL, model_key or MODEL_KEY
+        raw_url = model_url or MODEL_URL
+        return _validate_model_url(raw_url), model_key or MODEL_KEY
 
     def engine_name(model_url=None, model_key=None):
         return _get_info(*_resolve(model_url, model_key)).get("engine")
