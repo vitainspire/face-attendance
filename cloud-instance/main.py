@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 import numpy as np
 
@@ -2410,7 +2411,17 @@ def create_leave_request(
         status="pending",
     )
     db.add(leave)
-    db.flush()  # need leave.id before creating its per-subject approvals
+    try:
+        db.flush()  # need leave.id before creating its per-subject approvals
+    except IntegrityError:
+        # The SELECT check above already covers this in the common case — this only
+        # fires for a genuine concurrent double-submit that raced past it, caught here
+        # by the DB-level unique constraint instead of surfacing a raw 500.
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="A leave request for these exact dates and reason has already been submitted",
+        )
 
     for subject in _subjects_for_section(student.section_id, db):
         db.add(models.LeaveApproval(leave_request_id=leave.id, subject=subject, status="pending"))

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Float, DateTime, LargeBinary
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Float, DateTime, LargeBinary, UniqueConstraint
 from sqlalchemy.orm import relationship
 from database import Base
 import datetime
@@ -132,6 +132,13 @@ class LeaveRequest(Base):
 
     student = relationship("Student")
     approvals = relationship("LeaveApproval", back_populates="leave_request", cascade="all, delete-orphan")
+
+    # Backs up the application-level duplicate check in create_leave_request — that
+    # check-then-insert has a real TOCTOU race under true concurrent double-submits;
+    # this constraint makes a true duplicate impossible at the DB level regardless.
+    __table_args__ = (
+        UniqueConstraint("student_id", "start_date", "end_date", "reason", name="uq_leave_request_dedup"),
+    )
 
 
 class LeaveApproval(Base):

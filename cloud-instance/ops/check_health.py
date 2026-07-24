@@ -13,12 +13,17 @@ from email.mime.text import MIMEText
 STATE_FILE = "/home/ec2-user/app/.health_alert_state.json"
 REMINDER_INTERVAL_MINUTES = 60
 
-ALERT_FROM = os.environ["ALERT_EMAIL_FROM"]
-ALERT_APP_PASSWORD = os.environ["ALERT_EMAIL_APP_PASSWORD"]
-ALERT_TO = os.environ["ALERT_EMAIL_TO"]
+# All three are optional (see README) — email alerting is skipped, not fatal, if unset.
+ALERT_FROM = os.environ.get("ALERT_EMAIL_FROM")
+ALERT_APP_PASSWORD = os.environ.get("ALERT_EMAIL_APP_PASSWORD")
+ALERT_TO = os.environ.get("ALERT_EMAIL_TO")
+EMAIL_CONFIGURED = bool(ALERT_FROM and ALERT_APP_PASSWORD and ALERT_TO)
 
 
 def send_email(subject: str, body: str):
+    if not EMAIL_CONFIGURED:
+        print(f"[no email configured, skipping] {subject}\n{body}")
+        return
     msg = MIMEText(body)
     msg["Subject"] = subject
     msg["From"] = ALERT_FROM
