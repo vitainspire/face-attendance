@@ -180,11 +180,6 @@ else:  # remote
 
     def embed_largest(contents: bytes, model_url=None, model_key=None):
         url, key = _resolve(model_url, model_key)
-        # codeql[py/full-ssrf]: url is built from School.elastic_ip, which is validated
-        # to be a public (non-private/loopback/link-local/reserved/multicast) address
-        # both when submitted (main.py submit_onboarding) and again at the point it's
-        # turned into a URL (auth.resolve_tenant) — CodeQL can't trace either check
-        # through the database round-trip between them, but both are real and verified.
         r = requests.post(url + "/embed_largest",
                           files={"file": ("image.jpg", contents)},
                           headers={"x-api-key": key}, timeout=60)
@@ -193,7 +188,6 @@ else:  # remote
 
     def embed_largest_variants(contents: bytes, model_url=None, model_key=None):
         url, key = _resolve(model_url, model_key)
-        # codeql[py/full-ssrf]: see embed_largest above — same validated url/key pair.
         r = requests.post(url + "/embed_largest_variants",
                           files={"file": ("image.jpg", contents)},
                           headers={"x-api-key": key}, timeout=60)
