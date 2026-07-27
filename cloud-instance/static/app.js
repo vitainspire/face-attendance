@@ -2,7 +2,7 @@
 // Empty string when this frontend is served from the same origin as the backend (the
 // default — main.py's own /static mount). Set to the backend's own URL only when this
 // file is deployed somewhere else entirely (e.g. a Vercel-hosted static frontend).
-const API_BASE = '';
+const API_BASE = 'https://16-192-137-111.sslip.io';
 
 const state = {
     token: localStorage.getItem('token') || null,

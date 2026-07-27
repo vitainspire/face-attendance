@@ -5,7 +5,7 @@ let saToken = null;
 
 // See app.js for why this exists — empty when served from the same origin as the
 // backend (the default), set only when this file is deployed somewhere else entirely.
-const API_BASE = '';
+const API_BASE = 'https://16-192-137-111.sslip.io';
 
 function hide(id) { document.getElementById(id).classList.add('hidden'); }
 function show(id) { document.getElementById(id).classList.remove('hidden'); }

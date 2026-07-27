@@ -2,7 +2,7 @@ const TOKEN = new URLSearchParams(window.location.search).get('token');
 
 // See app.js for why this exists — empty when served from the same origin as the
 // backend (the default), set only when this file is deployed somewhere else entirely.
-const API_BASE = '';
+const API_BASE = 'https://16-192-137-111.sslip.io';
 
 const VIEWS = ['ob-loading', 'ob-form-view', 'ob-submitted-view', 'ob-provisioning-view',
                'ob-rejected-view', 'ob-failed-view', 'ob-active-view'];
