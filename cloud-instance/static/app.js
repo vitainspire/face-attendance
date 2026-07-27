@@ -2019,7 +2019,7 @@ async function loadReportClasses() {
         classSel.innerHTML = `<option>${escapeHtml(err.detail || 'Failed to load classes')}</option>`;
     }
 }
-document.getElementById('report_class').addEventListener('change', (e) => {
+document.getElementById('report_class').addEventListener('change', async (e) => {
     const cls = REPORT_CLASSES_CACHE.find(c => String(c.id) === e.target.value);
     const secSel = document.getElementById('report_section');
     secSel.innerHTML = '<option value="" disabled selected>Select a section...</option>';
@@ -2032,11 +2032,28 @@ document.getElementById('report_class').addEventListener('change', (e) => {
         });
         secSel.disabled = false;
     }
+
+    const subjSel = document.getElementById('report_subject');
+    subjSel.innerHTML = '<option value="All" selected>All Subjects</option>';
+    if (cls) {
+        try {
+            const data = await api(`/admin/subjects?class_id=${cls.id}`);
+            data.subjects.forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s.name;
+                opt.textContent = s.name;
+                subjSel.appendChild(opt);
+            });
+        } catch (_) {
+            // Leave just "All Subjects" if this fails — reports still work, just
+            // without the per-subject narrowing until the page is retried.
+        }
+    }
 });
 
 function reportQueryString() {
     const sectionId = document.getElementById('report_section').value;
-    const subject = document.getElementById('report_subject').value.trim() || 'All';
+    const subject = document.getElementById('report_subject').value || 'All';
     const startDate = document.getElementById('report_start_date').value;
     const endDate = document.getElementById('report_end_date').value;
     if (!sectionId || !startDate || !endDate) {
