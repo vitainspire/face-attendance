@@ -308,7 +308,7 @@
                         <option value="" disabled selected>Select a class...</option>
                     </select>
                 </div>
-                <form id="subject-form" style="display:flex; gap:12px; align-items:flex-end;">
+                <form id="subject-form" class="flex-form-row">
                     <div class="input-group" style="margin-bottom:0; flex:1;">
                         <label>New Subject Name</label>
                         <input type="text" id="new_subject_name" required placeholder="e.g. Mathematics">
@@ -323,7 +323,7 @@
                    subject there, only assigned teacher(s) can take attendance or approve leave requests for
                    it. A subject with nobody assigned stays open to any teacher, same as before this feature
                    existed.</p>
-                <form id="assignment-form" style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
+                <form id="assignment-form" class="flex-form-row">
                     <div class="input-group" style="margin-bottom:0;">
                         <label>Class</label>
                         <select id="assign_class" class="styled-select" required>
@@ -733,20 +733,20 @@
 
             <section id="teacher-analytics" class="tab-panel hidden">
                 <h2>Attendance Analytics</h2>
-                <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 24px;">
+                <div class="flex-form-row analytics-toolbar" style="margin-bottom: 24px;">
                     <div class="input-group" style="margin-bottom:0;">
                         <label>Section</label>
                         <select id="analytics_section" class="styled-select">
                             <option value="" disabled selected>Loading sections...</option>
                         </select>
                     </div>
-                    <div class="input-group" style="margin-bottom:0; margin-left: 16px;">
+                    <div class="input-group" style="margin-bottom:0;">
                         <label>Subject Filter</label>
                         <select id="analytics_subject" class="styled-select">
                             <option value="All" selected>All Subjects</option>
                         </select>
                     </div>
-                    <div style="flex: 1; text-align: right;">
+                    <div class="analytics-toolbar-actions">
                         <button id="btn-load-analytics" class="secondary-btn" style="margin:0;">Load</button>
                         <button id="btn-export-csv" class="primary-btn" style="margin:0 0 0 10px;">Download CSV</button>
                     </div>

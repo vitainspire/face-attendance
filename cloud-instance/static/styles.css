@@ -1053,3 +1053,89 @@ button:disabled { opacity: 0.5; cursor: not-allowed; transform: none !important;
     font-size: 0.85em;
     margin-top: 0;
 }
+
+/* ===================== Shared responsive form rows ===================== */
+/* Used by any form/toolbar that lays several fields out side-by-side on wide screens
+   (Add Subject, Teacher Assignments, Analytics filters) — desktop wraps naturally when
+   there isn't enough room; the mobile breakpoint below stacks everything full-width. */
+.flex-form-row {
+    display: flex;
+    gap: 12px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+}
+.flex-form-row > .input-group {
+    flex: 1 1 180px;
+}
+.analytics-toolbar-actions {
+    flex: 1 1 240px;
+    text-align: right;
+}
+
+/* ===================== Mobile (phones) ===================== */
+@media (max-width: 640px) {
+    body:has(#login-view:not(.hidden)) .glass-container,
+    body:has(#sa-login-view:not(.hidden)) .glass-container {
+        margin-top: 0;
+        min-height: 100vh;
+        border-radius: 0;
+        padding: 28px 20px;
+        box-shadow: none;
+    }
+
+    header { padding: 16px 20px; }
+
+    /* Sidebar becomes a horizontally-scrollable top bar instead of a fixed-width side
+       column — a 320px sidebar would otherwise eat most of a phone's own width. */
+    .view:has(.role-selector) { flex-direction: column; }
+    .role-selector {
+        flex-direction: row;
+        flex: 0 0 auto;
+        width: 100%;
+        min-height: auto;
+        padding: 10px 12px;
+        gap: 6px;
+        overflow-x: auto;
+        border-right: none;
+        border-bottom: 1px solid var(--sidebar-border);
+        -webkit-overflow-scrolling: touch;
+    }
+    /* The "Menu" label and (for parents) the brand block only make sense stacked above
+       a vertical list of buttons — in a horizontal scroller they'd sit awkwardly inline
+       with the nav buttons themselves, so they're hidden rather than squeezed in. */
+    .role-selector::before, .sidebar-brand { display: none; }
+    .role-selector button {
+        flex: 0 0 auto;
+        white-space: nowrap;
+        padding: 10px 14px;
+        font-size: 0.85rem;
+    }
+    .sidebar-spacer { display: none; }
+
+    .main-content-col > .page-header-row { padding: 14px 16px; }
+    .tab-panel { padding: 16px; }
+    .view:not(:has(.role-selector)) { padding: 16px; }
+
+    h1 { font-size: 1.25rem; }
+    h2 { font-size: 1.15rem; margin-bottom: 16px; }
+
+    /* Buttons that sit side-by-side on desktop (Select All/Deselect All, CSV/PDF
+       download, etc.) stack full-width instead of shrinking to an unreadable size. */
+    .btn-row { flex-direction: column; gap: 10px; }
+    .btn-row button { min-width: 0; width: 100%; }
+
+    .flex-form-row { flex-direction: column; align-items: stretch; }
+    .flex-form-row > .input-group { flex: none; width: 100%; }
+    .flex-form-row button { width: 100%; }
+    .analytics-toolbar-actions { text-align: left; }
+    .analytics-toolbar-actions button { width: 100%; margin: 8px 0 0 0 !important; }
+
+    .modal-box { padding: 20px; width: 92%; }
+
+    .manual-row { flex-wrap: wrap; }
+    .manual-row .manual-input { width: 100%; flex: 1 1 100%; }
+
+    .dropzone { padding: 28px 16px; min-height: 200px; }
+
+    .db-table th, .db-table td { padding: 10px 12px; font-size: 0.88em; }
+}
