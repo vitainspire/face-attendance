@@ -8,7 +8,8 @@ import uuid
 from typing import Optional, List
 
 import requests
-from fastapi import FastAPI, Depends, UploadFile, File, HTTPException, Form, BackgroundTasks, Response
+from fastapi import FastAPI, Depends, Request, UploadFile, File, HTTPException, Form, BackgroundTasks, Response
+from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
@@ -70,6 +71,18 @@ MATCHER_URL = os.environ.get("MATCHER_URL", "http://localhost:8800/match")
 MATCHER_API_KEY = os.environ.get("MATCHER_API_KEY", "change-me")
 
 app = FastAPI(title="Smart Attendance Backend")
+
+
+@app.exception_handler(requests.exceptions.RequestException)
+async def model_service_unreachable_handler(request: Request, exc: requests.exceptions.RequestException):
+    """Catches every unhandled network error talking to a school's model service (timeout,
+    connection refused, DNS failure, etc.) across every route that calls model_client —
+    without this, a school's instance being stopped/unreachable surfaces as a raw,
+    unhelpful 500 instead of a clear, expected error."""
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "This school's model service is currently unreachable. Please try again shortly."},
+    )
 
 
 # --- Recognize queue -------------------------------------------------------------
