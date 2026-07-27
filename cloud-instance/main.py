@@ -9,6 +9,7 @@ from typing import Optional, List
 
 import requests
 from fastapi import FastAPI, Depends, Request, UploadFile, File, HTTPException, Form, BackgroundTasks, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
@@ -71,6 +72,21 @@ MATCHER_URL = os.environ.get("MATCHER_URL", "http://localhost:8800/match")
 MATCHER_API_KEY = os.environ.get("MATCHER_API_KEY", "change-me")
 
 app = FastAPI(title="Smart Attendance Backend")
+
+# Only needed when the frontend is hosted on a different origin than this API (e.g. a
+# Vercel-hosted static frontend calling this server directly) — same-origin deployments
+# (frontend served from this app's own /static, the default) never hit CORS at all, so
+# this is a no-op unless ALLOWED_FRONTEND_ORIGIN is actually set. Comma-separated so a
+# production and a preview-deployment domain can both be allowed at once.
+_allowed_origins = [o.strip() for o in os.environ.get("ALLOWED_FRONTEND_ORIGIN", "").split(",") if o.strip()]
+if _allowed_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_allowed_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 
 @app.exception_handler(requests.exceptions.RequestException)

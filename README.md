@@ -142,6 +142,12 @@ S3_BUCKET_NAME / AWS_DEFAULT_REGION           (only for the ORIGINAL/default sch
                                                 photos, using the EC2 instance's IAM role —
                                                 every school onboarded afterward configures
                                                 their own S3 bucket through the admin UI instead)
+ALLOWED_FRONTEND_ORIGIN                        (only needed if the frontend is hosted
+                                                somewhere OTHER than this server's own
+                                                /static — e.g. a separately-deployed Vercel
+                                                site. Comma-separated list of origins to
+                                                allow via CORS; leave unset for the default
+                                                same-origin setup, where this is a no-op)
 ```
 
 Each school's own Supabase URL, SSH deploy key, S3 credentials, and model-service API

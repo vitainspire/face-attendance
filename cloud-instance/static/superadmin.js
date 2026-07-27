@@ -3,6 +3,10 @@
 // rather than staying signed in indefinitely like the regular teacher/parent/admin app.
 let saToken = null;
 
+// See app.js for why this exists — empty when served from the same origin as the
+// backend (the default), set only when this file is deployed somewhere else entirely.
+const API_BASE = '';
+
 function hide(id) { document.getElementById(id).classList.add('hidden'); }
 function show(id) { document.getElementById(id).classList.remove('hidden'); }
 
@@ -26,7 +30,7 @@ async function saApi(path, { method = 'GET', json } = {}) {
         opts.headers['Content-Type'] = 'application/json';
         opts.body = JSON.stringify(json);
     }
-    const res = await fetch(path, opts);
+    const res = await fetch(API_BASE + path, opts);
     let data = null;
     try { data = await res.json(); } catch (_) {}
     if (!res.ok) {
@@ -58,7 +62,7 @@ document.getElementById('btn-sa-logout').addEventListener('click', () => {
 // case instead of showing an error right away.
 async function saLoginWithRetry(url, form, maxAttempts = 4) {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        const res = await fetch(url, {
+        const res = await fetch(API_BASE + url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: form,

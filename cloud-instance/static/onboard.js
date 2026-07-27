@@ -1,5 +1,9 @@
 const TOKEN = new URLSearchParams(window.location.search).get('token');
 
+// See app.js for why this exists — empty when served from the same origin as the
+// backend (the default), set only when this file is deployed somewhere else entirely.
+const API_BASE = '';
+
 const VIEWS = ['ob-loading', 'ob-form-view', 'ob-submitted-view', 'ob-provisioning-view',
                'ob-rejected-view', 'ob-failed-view', 'ob-active-view'];
 function showView(id) {
@@ -16,7 +20,7 @@ async function fetchStatus() {
         return;
     }
     try {
-        const res = await fetch(`/public/onboarding/${TOKEN}`);
+        const res = await fetch(`${API_BASE}/public/onboarding/${TOKEN}`);
         const data = await res.json();
         if (!res.ok) {
             showView('ob-failed-view');
@@ -33,7 +37,7 @@ async function fetchStatus() {
 // Shared by the initial 'invited' view and the resubmit-after-rejected/failed flow.
 function populateKeyUI(data) {
     document.getElementById('ob-school-name').innerText = `Setting up: ${data.school_name}`;
-    document.getElementById('btn-download-pubkey').href = `/public/onboarding/${TOKEN}/public_key.pub`;
+    document.getElementById('btn-download-pubkey').href = `${API_BASE}/public/onboarding/${TOKEN}/public_key.pub`;
     document.getElementById('ob-pubkey-command').value =
         `echo "${data.public_key}" >> ~/.ssh/authorized_keys`;
 }
@@ -82,7 +86,7 @@ document.getElementById('ob-form').addEventListener('submit', async (e) => {
     hide('ob-form-error');
     const errBox = document.getElementById('ob-form-error');
     try {
-        const res = await fetch(`/public/onboarding/${TOKEN}/submit`, {
+        const res = await fetch(`${API_BASE}/public/onboarding/${TOKEN}/submit`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -104,7 +108,7 @@ document.getElementById('ob-form').addEventListener('submit', async (e) => {
 // needs the form re-opened explicitly, since its status stays 'rejected'/'failed' until
 // a fresh submission changes it.
 function reopenFormForResubmit() {
-    fetch(`/public/onboarding/${TOKEN}`).then(r => r.json()).then(data => {
+    fetch(`${API_BASE}/public/onboarding/${TOKEN}`).then(r => r.json()).then(data => {
         populateKeyUI(data);
         showView('ob-form-view');
     });

@@ -1,4 +1,9 @@
 // ===================== State & helpers =====================
+// Empty string when this frontend is served from the same origin as the backend (the
+// default — main.py's own /static mount). Set to the backend's own URL only when this
+// file is deployed somewhere else entirely (e.g. a Vercel-hosted static frontend).
+const API_BASE = '';
+
 const state = {
     token: localStorage.getItem('token') || null,
     role: localStorage.getItem('role') || null,
@@ -30,7 +35,7 @@ async function api(path, { method = 'GET', json, form } = {}) {
     } else if (form) {
         opts.body = form; // browser sets multipart boundary
     }
-    const res = await fetch(path, opts);
+    const res = await fetch(API_BASE + path, opts);
     let data = null;
     try { data = await res.json(); } catch (_) {}
     if (!res.ok) {
@@ -303,7 +308,7 @@ document.getElementById('tab-teacher-logout').addEventListener('click', logout);
 // automatic retries smooth over that rare case instead of showing an error right away.
 async function loginWithRetry(url, form, maxAttempts = 4) {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        const res = await fetch(url, {
+        const res = await fetch(API_BASE + url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: form,
@@ -1508,7 +1513,7 @@ document.getElementById('btn-export-csv').addEventListener('click', async () => 
         let url = `/teacher/analytics/export?section_id=${sec}`;
         if (subj !== 'All') url += `&subject=${subj}`;
         
-        const res = await fetch(url, {
+        const res = await fetch(API_BASE + url, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
         if (!res.ok) throw new Error("Failed to export");
@@ -1973,7 +1978,7 @@ document.getElementById('btn-load-analytics').addEventListener('click', fetchAna
 // ===================== Shared: authed file download =====================
 async function downloadAuthed(url, filename, errBoxId) {
     try {
-        const res = await fetch(url, { headers: authHeaders() });
+        const res = await fetch(API_BASE + url, { headers: authHeaders() });
         if (!res.ok) {
             let detail = `Request failed (${res.status})`;
             try { detail = (await res.json()).detail || detail; } catch (_) {}
