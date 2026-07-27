@@ -425,6 +425,15 @@
                             teacher to manually confirm or check them.
                         </p>
                     </div>
+                    <div class="input-group" style="margin-top:24px;">
+                        <label>School's Local Timezone (offset from UTC, in minutes)</label>
+                        <input type="number" id="school_timezone_offset" placeholder="e.g. 330 for India Standard Time" step="30">
+                        <p class="hint" style="margin-top:8px;">
+                            Attendance "today" and upcoming events use this to mean YOUR school's calendar day,
+                            not necessarily the UTC one. Leave at 0 (or blank) if unsure — India Standard Time is
+                            <b>330</b> (UTC+5:30).
+                        </p>
+                    </div>
                     <div id="recognition-settings-error" class="result-box error-text hidden"></div>
                     <div id="recognition-settings-success" class="result-box success-box hidden"></div>
                     <button type="button" id="btn-save-recognition" class="primary-btn">Save Threshold</button>

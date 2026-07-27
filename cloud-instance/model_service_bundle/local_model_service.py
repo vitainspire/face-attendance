@@ -30,6 +30,12 @@ def _decode(contents: bytes):
     if img is None:                       # AVIF/HEIC/etc. fallback via Pillow
         try:
             from PIL import Image
+            # Explicit, intentional cap rather than relying only on Pillow's own
+            # default decompression-bomb threshold — a small, highly-compressed file
+            # could still declare an enormous pixel count; _cap_size() below only
+            # resizes AFTER the full image is already decoded into memory, so it can't
+            # prevent the peak-memory spike during decode itself.
+            Image.MAX_IMAGE_PIXELS = 40_000_000
             pil = Image.open(io.BytesIO(contents)).convert("RGB")
             img = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
         except Exception:

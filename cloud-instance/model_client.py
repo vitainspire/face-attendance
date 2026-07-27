@@ -28,6 +28,12 @@ if MODE == "local":
         if img is None:
             try:
                 from PIL import Image
+                # Explicit, intentional cap rather than relying only on Pillow's own
+                # default decompression-bomb threshold — a legitimate enrollment/group
+                # photo never needs anywhere near this many pixels, and the upload is
+                # already size-capped upstream (6MB), but a small, highly-compressed
+                # file could still declare an enormous pixel count.
+                Image.MAX_IMAGE_PIXELS = 40_000_000
                 pil = Image.open(io.BytesIO(contents)).convert("RGB")
                 img = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
             except Exception:

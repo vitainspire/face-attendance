@@ -57,18 +57,28 @@ def configured(db: Optional[Session] = None) -> bool:
     return _tenant_config(db) is not None or bool(_DEFAULT_BUCKET)
 
 
-def upload_photo(student_id: int, contents: bytes, db: Optional[Session] = None) -> str:
+def _namespace(school_id: Optional[int]) -> str:
+    """Every school that hasn't configured its OWN bucket falls back to the shared
+    default bucket (see module docstring) — without a per-school prefix, two schools'
+    identically-numbered students (each tenant's Student.id starts from 1 independently)
+    would silently overwrite each other's enrollment photos there. Harmless, but applied
+    unconditionally (even for schools with their own dedicated bucket) so this can never
+    regress if bucket configuration ever changes."""
+    return f"school_{school_id}" if school_id is not None else "default"
+
+
+def upload_photo(student_id: int, contents: bytes, school_id: Optional[int] = None, db: Optional[Session] = None) -> str:
     """Uploads a student's photo to S3, returns the object key to store on the row."""
     client, bucket = _client_and_bucket(db)
-    key = f"students/{student_id}/photo.jpg"
+    key = f"{_namespace(school_id)}/students/{student_id}/photo.jpg"
     client.put_object(Bucket=bucket, Key=key, Body=contents, ContentType="image/jpeg")
     return key
 
 
-def upload_photo_frame(student_id: int, index: int, contents: bytes, db: Optional[Session] = None) -> str:
+def upload_photo_frame(student_id: int, index: int, contents: bytes, school_id: Optional[int] = None, db: Optional[Session] = None) -> str:
     """Uploads one frame of a multi-frame capture (burst/video-derived enrollment)."""
     client, bucket = _client_and_bucket(db)
-    key = f"students/{student_id}/frame_{index}.jpg"
+    key = f"{_namespace(school_id)}/students/{student_id}/frame_{index}.jpg"
     client.put_object(Bucket=bucket, Key=key, Body=contents, ContentType="image/jpeg")
     return key
 

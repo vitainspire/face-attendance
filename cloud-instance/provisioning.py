@@ -178,6 +178,12 @@ def provision_school(school_id: int):
     insightface on their instance is the slow part). Never raises; failure is recorded
     on the School row instead, since nothing is awaiting this call directly."""
     db = database.SessionLocal()
+    # Populated as each secret is decrypted, so the except block below can redact all of
+    # them from whatever gets stored in provisioning_error — a malformed DSN, for
+    # instance, makes SQLAlchemy raise with the full connection string (password
+    # included) embedded in its own message, which would otherwise defeat the point of
+    # keeping these encrypted at rest the moment a superadmin views the failed request.
+    secrets_to_redact = []
     try:
         school = db.query(models.School).filter(models.School.id == school_id).first()
         if not school:
@@ -186,10 +192,12 @@ def provision_school(school_id: int):
         db.commit()
 
         supabase_url = decrypt_secret(school.supabase_db_url_encrypted)
+        secrets_to_redact.append(supabase_url)
         private_pem = decrypt_secret(school.deploy_private_key_encrypted)
+        secrets_to_redact.append(private_pem)
 
         # 1. Bootstrap schema on the school's own Supabase DB — same tables, fresh DB.
-        tenant_engine = create_engine(supabase_url, pool_pre_ping=True)
+        tenant_engine = create_engine(supabase_url, pool_pre_ping=True, connect_args={"connect_timeout": 15})
         models.Base.metadata.create_all(bind=tenant_engine)
 
         # 2. SSH in with OUR generated key (school only ever saw the public half) and
@@ -198,14 +206,16 @@ def provision_school(school_id: int):
         pkey = paramiko.RSAKey.from_private_key(io.StringIO(private_pem))
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(_PinnedHostKeyPolicy(school, db))
-        client.connect(hostname=school.elastic_ip, username=DEPLOY_SSH_USER, pkey=pkey, timeout=30)
-
         try:
+            client.connect(hostname=school.elastic_ip, username=DEPLOY_SSH_USER, pkey=pkey, timeout=30)
+
             sftp = client.open_sftp()
+            sftp.get_channel().settimeout(300)  # bounds a stalled mid-transfer, not just the initial connect
             _upload_bundle(sftp, BUNDLE_DIR, REMOTE_APP_DIR)
             sftp.close()
 
             model_api_key = secrets.token_urlsafe(32)
+            secrets_to_redact.append(model_api_key)
             _, stdout, stderr = client.exec_command(_setup_script(model_api_key), timeout=900)
             exit_code = stdout.channel.recv_exit_status()
             out = stdout.read().decode("utf-8", "ignore")
@@ -251,7 +261,11 @@ def provision_school(school_id: int):
         school = db.query(models.School).filter(models.School.id == school_id).first()
         if school:
             school.status = "failed"
-            school.provisioning_error = traceback.format_exc()[-2000:]
+            tb = traceback.format_exc()
+            for secret in secrets_to_redact:
+                if secret:
+                    tb = tb.replace(secret, "<redacted>")
+            school.provisioning_error = tb[-2000:]
             db.commit()
     finally:
         db.close()
@@ -277,8 +291,8 @@ def set_service_running(school_id: int, running: bool):
         pkey = paramiko.RSAKey.from_private_key(io.StringIO(private_pem))
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(_PinnedHostKeyPolicy(school, db))
-        client.connect(hostname=school.elastic_ip, username=DEPLOY_SSH_USER, pkey=pkey, timeout=30)
         try:
+            client.connect(hostname=school.elastic_ip, username=DEPLOY_SSH_USER, pkey=pkey, timeout=30)
             action = "start" if running else "stop"
             _, stdout, stderr = client.exec_command(f"sudo systemctl {action} model-service.service", timeout=30)
             exit_code = stdout.channel.recv_exit_status()

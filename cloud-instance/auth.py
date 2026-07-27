@@ -19,9 +19,16 @@ import models
 
 # --- Configuration ---
 # The real secret lives only in the server's protected env file (/etc/webapp.env),
-# never in source. This fallback is intentionally unusable so a missing env var
-# fails loudly in a way that's obvious, rather than silently signing with a known value.
-SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "dev-only-insecure-default-do-not-use-in-prod")
+# never in source. Unlike a fallback value (which would let anyone forge a valid JWT
+# using this exact string, since it's public in the repo), a missing env var must fail
+# the whole process at startup — same pattern as CONTROL_PLANE_ENCRYPTION_KEY.
+SECRET_KEY = os.environ.get("JWT_SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError(
+        "JWT_SECRET_KEY is not set — generate one with "
+        "`python -c \"import secrets; print(secrets.token_hex(32))\"` "
+        "and put it in the server's env file. Refusing to sign tokens without it."
+    )
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 1 day
 
@@ -211,6 +218,15 @@ def _tenant_context(token: str = Depends(oauth2_scheme)):
 
     user = db.query(models.User).filter(models.User.username == username).first()
     if user is None:
+        db.close()
+        raise credentials_exception
+    # Tokens issued before a password reset carry the OLD token_version — comparing
+    # against the CURRENT value on the row means resetting a password (or any other
+    # deliberate invalidation) immediately revokes every already-issued token for that
+    # account, instead of leaving them valid for up to their full 24h expiry. A token
+    # with no "tv" claim (issued before this check existed) is treated as version 0,
+    # matching every row's default, so it isn't broken by this rollout.
+    if payload.get("tv", 0) != (user.token_version or 0):
         db.close()
         raise credentials_exception
     try:

@@ -1511,7 +1511,7 @@ document.getElementById('btn-export-csv').addEventListener('click', async () => 
     try {
         const token = localStorage.getItem('token');
         let url = `/teacher/analytics/export?section_id=${sec}`;
-        if (subj !== 'All') url += `&subject=${subj}`;
+        if (subj !== 'All') url += `&subject=${encodeURIComponent(subj)}`;
         
         const res = await fetch(API_BASE + url, {
             headers: { 'Authorization': `Bearer ${token}` }
@@ -1945,7 +1945,7 @@ async function fetchAnalytics() {
     const subj = document.getElementById('analytics_subject').value;
     try {
         let url = `/teacher/analytics?section_id=${sec}`;
-        if (subj !== 'All') url += `&subject=${subj}`;
+        if (subj !== 'All') url += `&subject=${encodeURIComponent(subj)}`;
         const data = await api(url);
         
         const low = document.getElementById('low-list');
@@ -2431,6 +2431,7 @@ async function loadRecognitionSettings() {
         const pct = Math.round(data.auto_check_threshold * 100);
         document.getElementById('recognition_threshold').value = pct;
         document.getElementById('recognition-threshold-display').innerText = pct + '%';
+        document.getElementById('school_timezone_offset').value = data.timezone_offset_minutes || 0;
         box.className = data.is_default ? 'result-box' : 'result-box success-box';
         box.innerText = data.is_default
             ? `Using the default threshold (${pct}%) — you haven't customized this yet.`
@@ -2449,9 +2450,10 @@ document.getElementById('btn-save-recognition').addEventListener('click', async 
     hide('recognition-settings-error'); hide('recognition-settings-success');
     try {
         const pct = parseInt(document.getElementById('recognition_threshold').value);
+        const tzRaw = document.getElementById('school_timezone_offset').value;
         await api('/admin/recognition_settings', {
             method: 'POST',
-            json: { auto_check_threshold: pct / 100 },
+            json: { auto_check_threshold: pct / 100, timezone_offset_minutes: tzRaw === '' ? 0 : parseInt(tzRaw) },
         });
         document.getElementById('recognition-settings-success').innerText = 'Saved! This applies the next time a teacher scans an attendance photo.';
         show('recognition-settings-success');

@@ -456,10 +456,25 @@ def _login_impl(
 
         if matched is None:
             if not candidates:
-                # No real account anywhere has this username — still pay the same
-                # bcrypt cost a real wrong-password attempt would, so this path isn't
-                # distinguishably faster (see _DUMMY_PASSWORD_HASH above).
+                # No real account anywhere has this username. Route it through the SAME
+                # lockout bookkeeping a real account uses (a dedicated namespaced key, so
+                # it can never collide with or affect a real account's own lockout state)
+                # — otherwise a nonexistent username could never reach the fast-429
+                # branch below, making its response timing distinguishably different
+                # from a real, repeatedly-wrong-password account after 5 attempts. That
+                # difference is a username-existence oracle: 5 wrong attempts followed by
+                # a 6th reveals, via response speed/status alone, whether the account is
+                # real — useful reconnaissance before a credential-stuffing attempt.
+                dummy_key = f"nonexistent:{form_data.username}"
+                try:
+                    auth.check_login_lockout(dummy_key)
+                except HTTPException:
+                    raise HTTPException(status_code=429, detail="Too many failed login attempts. Try again in a few minutes.")
+                # Still pay the same bcrypt cost a real wrong-password attempt would, so
+                # this path isn't distinguishably faster on its own either (see
+                # _DUMMY_PASSWORD_HASH above).
                 auth.verify_password(form_data.password, _DUMMY_PASSWORD_HASH)
+                auth.record_login_failure(dummy_key)
             elif first_tried_key is not None:
                 # Charge exactly ONE account for this failed attempt — the first
                 # not-already-locked candidate — instead of fanning the failure out to
@@ -479,7 +494,10 @@ def _login_impl(
             needs_capture = bool(user.student.parent_must_capture)
         student_id = user.student_id
 
-        token = auth.create_access_token({"sub": user.username, "role": user.role, "school_id": school_id})
+        token = auth.create_access_token({
+            "sub": user.username, "role": user.role, "school_id": school_id,
+            "tv": user.token_version or 0,
+        })
         return {
             "access_token": token,
             "token_type": "bearer",
@@ -514,6 +532,7 @@ def change_password(
     if policy_error:
         raise HTTPException(status_code=400, detail=policy_error)
     current_user.hashed_password = auth.get_password_hash(body.new_password)
+    current_user.token_version = (current_user.token_version or 0) + 1
     db.commit()
     return {"status": "ok"}
 
@@ -543,7 +562,13 @@ def register_student(
         parent_must_capture=True,
     )
     db.add(student)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # The SELECT check above already covers this in the common case — this only
+        # fires for a genuine concurrent double-submit that raced past it.
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Roll No {req.roll_no} already exists")
     db.refresh(student)
 
     # Auto-create the parent login. Username derived from roll_no, random password.
@@ -593,7 +618,11 @@ def register_teacher(
         role="teacher",
     )
     db.add(teacher)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Username '{username}' already exists")
 
     return {
         "message": f"Teacher account created: {username}",
@@ -630,6 +659,7 @@ def reset_teacher_password(
         raise HTTPException(status_code=404, detail="Teacher not found")
     password = auth.generate_compliant_password()
     teacher.hashed_password = auth.get_password_hash(password)
+    teacher.token_version = (teacher.token_version or 0) + 1
     db.commit()
     return {"username": teacher.username, "password": password}
 
@@ -795,6 +825,9 @@ DEFAULT_AUTO_CHECK_THRESHOLD = 0.90
 
 class RecognitionSettingsRequest(BaseModel):
     auto_check_threshold: float
+    # Minutes offset from UTC (e.g. 330 for IST). Optional — omitting it leaves
+    # whatever's already configured (or UTC/0 default) untouched.
+    timezone_offset_minutes: Optional[int] = None
 
 
 @app.get("/recognition_settings")
@@ -806,7 +839,11 @@ def get_recognition_settings(
     needs this value too, to know what counts as a confident-enough auto-check."""
     cfg = db.query(models.RecognitionSettings).first()
     threshold = cfg.auto_check_threshold if cfg and cfg.auto_check_threshold is not None else DEFAULT_AUTO_CHECK_THRESHOLD
-    return {"auto_check_threshold": threshold, "is_default": cfg is None or cfg.auto_check_threshold is None}
+    return {
+        "auto_check_threshold": threshold,
+        "is_default": cfg is None or cfg.auto_check_threshold is None,
+        "timezone_offset_minutes": cfg.timezone_offset_minutes if cfg and cfg.timezone_offset_minutes is not None else 0,
+    }
 
 
 @app.post("/admin/recognition_settings")
@@ -817,13 +854,37 @@ def save_recognition_settings(
 ):
     if not (0.5 <= req.auto_check_threshold <= 0.99):
         raise HTTPException(status_code=400, detail="Threshold must be between 0.50 and 0.99")
+    if req.timezone_offset_minutes is not None and not (-720 <= req.timezone_offset_minutes <= 840):
+        raise HTTPException(status_code=400, detail="Timezone offset must be a real UTC offset in minutes")
     cfg = db.query(models.RecognitionSettings).first()
     if not cfg:
         cfg = models.RecognitionSettings()
         db.add(cfg)
     cfg.auto_check_threshold = req.auto_check_threshold
+    if req.timezone_offset_minutes is not None:
+        cfg.timezone_offset_minutes = req.timezone_offset_minutes
     db.commit()
-    return {"message": "Saved", "auto_check_threshold": cfg.auto_check_threshold}
+    return {
+        "message": "Saved",
+        "auto_check_threshold": cfg.auto_check_threshold,
+        "timezone_offset_minutes": cfg.timezone_offset_minutes or 0,
+    }
+
+
+def _school_today_range(db: Session):
+    """(today_start, today_end) as UTC datetimes representing "today" in THIS school's
+    configured local time (RecognitionSettings.timezone_offset_minutes, default 0/UTC).
+    Used anywhere "today" needs to mean the school's own calendar day, not necessarily
+    the UTC one — e.g. a school in IST (UTC+5:30) taking attendance at 11pm local time
+    is still on the same UTC day, but one taking attendance at 11pm UTC (4:30am IST) is
+    already on the NEXT local day."""
+    cfg = db.query(models.RecognitionSettings).first()
+    offset = datetime.timedelta(minutes=(cfg.timezone_offset_minutes or 0) if cfg else 0)
+    local_now = datetime.datetime.utcnow() + offset
+    local_today_start = datetime.datetime.combine(local_now.date(), datetime.time.min)
+    today_start = local_today_start - offset
+    today_end = today_start + datetime.timedelta(days=1)
+    return today_start, today_end
 
 
 # --- School events / announcements (per school) -------------------------------
@@ -900,7 +961,7 @@ def list_upcoming_events(
 ):
     """Upcoming events only (today or later), soonest first, capped at 5 — a dashboard
     preview, not a full history."""
-    today_start = datetime.datetime.combine(datetime.datetime.utcnow().date(), datetime.time.min)
+    today_start, _ = _school_today_range(db)
     events = db.query(models.SchoolEvent).filter(
         models.SchoolEvent.event_date >= today_start
     ).order_by(models.SchoolEvent.event_date.asc()).limit(5).all()
@@ -997,7 +1058,11 @@ def create_class(
         raise HTTPException(status_code=400, detail=f"Class '{name}' already exists")
     cls = models.ClassGroup(name=name)
     db.add(cls)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Class '{name}' already exists")
     db.refresh(cls)
     return {"id": cls.id, "name": cls.name}
 
@@ -1025,7 +1090,11 @@ def create_section(
         raise HTTPException(status_code=400, detail=f"Section '{name}' already exists in this class")
     sec = models.Section(name=name, class_id=req.class_id)
     db.add(sec)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Section '{name}' already exists in this class")
     db.refresh(sec)
     return {"id": sec.id, "name": sec.name, "class_id": sec.class_id}
 
@@ -1067,7 +1136,11 @@ def create_subject(
         raise HTTPException(status_code=400, detail=f"Subject '{name}' already exists in this class")
     subject = models.Subject(name=name, class_id=req.class_id)
     db.add(subject)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Subject '{name}' already exists in this class")
     db.refresh(subject)
     return {"id": subject.id, "name": subject.name, "class_id": subject.class_id}
 
@@ -1167,17 +1240,22 @@ def delete_teacher_assignment(
 
 def teacher_can_act_on(db: Session, teacher_id: int, section_id: int, subject: str) -> bool:
     """True if this teacher may take attendance / recognize photos / approve a leave
-    request for this (section, subject) pair. Two rules, in order:
+    request for this (section, subject) pair. Rules, in order:
 
     1. If THIS teacher is specifically assigned to this pair, always True.
-    2. Otherwise: True only if BOTH (a) nobody at all is assigned to this pair, AND
-       (b) this teacher has never been assigned to anything anywhere. A teacher with
-       even one assignment is boxed into exactly their own assigned pairs — they don't
-       get to freely act on some other, unrelated, still-unassigned subject just
-       because nobody else claimed it either (e.g. Pallavi assigned to Hindi/5C must
-       NOT be able to take attendance for Math/5C, even if Math/5C has no assignment).
-       A teacher who has never been assigned to ANYTHING stays fully open, so a school
-       that hasn't adopted this feature yet keeps working exactly as before.
+    2. If this teacher has ANY assignment elsewhere, they're boxed into exactly their
+       own assigned pairs — they don't get to freely act on some other, unrelated,
+       still-unassigned subject just because nobody else claimed it either (e.g.
+       Pallavi assigned to Hindi/5C must NOT be able to take attendance for Math/5C,
+       even if Math/5C has no assignment).
+    3. If this teacher has NO assignment anywhere, but this SCHOOL has assignments for
+       OTHER teachers, they're denied too — a fresh teacher account created partway
+       through a school actively using this feature should default to no access, not
+       unrestricted access to every other teacher's sections until an admin gets around
+       to assigning them.
+    4. Only if NEITHER this teacher NOR anyone else at the school has ever been
+       assigned anything does the pair stay fully open — this is what keeps a school
+       that hasn't adopted the feature at all working exactly as before.
 
     Subject comparisons are case/whitespace-insensitive: /teacher/recognize and
     /teacher/submit_attendance accept `subject` as arbitrary free-form input (not
@@ -1200,6 +1278,15 @@ def teacher_can_act_on(db: Session, teacher_id: int, section_id: int, subject: s
     if teacher_has_any_assignment:
         return False
 
+    # A brand-new teacher account (zero assignments of their own) only stays "fully
+    # open" if this school has never used the assignment feature at all — the moment
+    # ANY teacher anywhere in the school has an assignment, the feature is in active
+    # use, and a fresh account with none yet should default to no access rather than
+    # unrestricted access to every other teacher's sections during the normal window
+    # before an admin gets around to assigning them.
+    if db.query(models.TeacherAssignment.id).first() is not None:
+        return False
+
     pair_has_any_assignment = db.query(models.TeacherAssignment).filter(
         models.TeacherAssignment.section_id == section_id,
         func.lower(models.TeacherAssignment.subject) == normalized_subject,
@@ -1211,10 +1298,11 @@ def teacher_can_access_section(db: Session, teacher_id: int, section_id: int) ->
     """Subject-agnostic version of teacher_can_act_on, for routes that read/sync a
     section's full roster or biometric data rather than acting on one specific
     subject (e.g. downloading the embeddings gallery for offline recognition — matching
-    a face to a name has to happen before a subject is even chosen). Same two-tier
-    rule: a teacher with an assignment ANYWHERE in this section may access it; a
-    teacher with assignments only in OTHER sections may not; a teacher with no
-    assignments anywhere stays fully open (legacy behavior)."""
+    a face to a name has to happen before a subject is even chosen). Same rules: a
+    teacher with an assignment ANYWHERE in this section may access it; a teacher with
+    assignments only in OTHER sections may not; a teacher with none at all stays open
+    ONLY if this school has never used the assignment feature for anyone (see
+    teacher_can_act_on for the full reasoning)."""
     if db.query(models.TeacherAssignment).filter(
         models.TeacherAssignment.teacher_id == teacher_id,
         models.TeacherAssignment.section_id == section_id,
@@ -1224,7 +1312,11 @@ def teacher_can_access_section(db: Session, teacher_id: int, section_id: int) ->
     teacher_has_any_assignment = db.query(models.TeacherAssignment).filter(
         models.TeacherAssignment.teacher_id == teacher_id
     ).first() is not None
-    return not teacher_has_any_assignment
+    if teacher_has_any_assignment:
+        return False
+    # Same reasoning as teacher_can_act_on: a fresh account only stays "fully open" if
+    # this school has never used the assignment feature at all.
+    return db.query(models.TeacherAssignment.id).first() is None
 
 
 @app.get("/admin/students")
@@ -1292,7 +1384,11 @@ def update_student(
     student.name = req.name
     student.roll_no = req.roll_no
     student.section_id = req.section_id
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Roll No {req.roll_no} already in use")
     return {"message": f"Updated {student.name}", "id": student.id}
 
 
@@ -1325,6 +1421,7 @@ def reset_parent_credentials(
     else:
         parent.username = username  # keep username in sync with current roll no
         parent.hashed_password = auth.get_password_hash(new_password)
+        parent.token_version = (parent.token_version or 0) + 1
     db.commit()
 
     return {
@@ -1355,10 +1452,24 @@ def delete_student(
     ).delete()
     own_parent = db.query(models.User).filter(models.User.student_id == student_id).first()
     if own_parent:
-        db.query(models.ParentChild).filter(
+        # This parent's login is keyed off the legacy User.student_id field, which
+        # points at the student just deleted — but the SAME login may also cover other,
+        # still-active siblings via ParentChild (see link_child). Only remove the whole
+        # login if there are truly no other children left on it; otherwise re-point it to
+        # a remaining sibling so that family doesn't lose access to their other kids.
+        sibling_link = db.query(models.ParentChild).filter(
             models.ParentChild.parent_id == own_parent.id
-        ).delete()
-        db.delete(own_parent)
+        ).join(models.Student, models.Student.id == models.ParentChild.student_id).filter(
+            models.Student.deleted_at.is_(None)
+        ).first()
+        if sibling_link:
+            own_parent.student_id = sibling_link.student_id
+            db.query(models.ParentChild).filter(models.ParentChild.id == sibling_link.id).delete()
+        else:
+            db.query(models.ParentChild).filter(
+                models.ParentChild.parent_id == own_parent.id
+            ).delete()
+            db.delete(own_parent)
     student.deleted_at = datetime.datetime.utcnow()
     db.commit()
     return {"message": f"Deleted {student.name}"}
@@ -1423,6 +1534,24 @@ async def _read_capped(file: UploadFile, max_bytes: int = MAX_UPLOAD_BYTES) -> b
     return b"".join(chunks)
 
 
+# Recognized by their leading magic bytes — no image library needed for this cheap check
+# (Pillow/opencv are deliberately NOT installed on the cloud instance). This isn't a full
+# format validation, just a real check that we're not storing/forwarding to the model
+# service something that clearly isn't image data at all (e.g. a polyglot file crafted to
+# smuggle a second payload past a check that only relies on face-detection succeeding).
+_IMAGE_MAGIC_BYTES = (
+    b"\xff\xd8\xff",           # JPEG
+    b"\x89PNG\r\n\x1a\n",      # PNG
+    b"RIFF",                    # WEBP (starts RIFF....WEBP — checked further below)
+)
+
+
+def _looks_like_image(contents: bytes) -> bool:
+    if contents[:4] == b"RIFF" and contents[8:12] == b"WEBP":
+        return True
+    return any(contents.startswith(sig) for sig in _IMAGE_MAGIC_BYTES if sig != b"RIFF")
+
+
 # --- Parent -----------------------------------------------------------------
 @app.get("/parent/status")
 def parent_status(
@@ -1442,6 +1571,7 @@ async def parent_upload_photo(
     file: UploadFile = File(...),
     db: Session = Depends(auth.get_tenant_db),
     mc: tuple = Depends(auth.get_model_config),
+    school_id: Optional[int] = Depends(auth.get_school_id),
     current_user: models.User = Depends(auth.require_role("parent")),
 ):
     """Parent (first login) uploads a live camera photo, saved to their student record."""
@@ -1449,12 +1579,14 @@ async def parent_upload_photo(
         raise HTTPException(status_code=400, detail="No student linked to this parent")
 
     contents = await _read_capped(file)
+    if not _looks_like_image(contents):
+        raise HTTPException(status_code=400, detail="File does not look like a valid image (JPEG/PNG/WEBP)")
     if model_client.embed_largest(contents, model_url=mc[0], model_key=mc[1]) is None:
         raise HTTPException(status_code=400, detail="No face detected — please retake the photo")
 
     student = current_user.student
     if s3_photos.configured(db):
-        student.photo_s3_key = s3_photos.upload_photo(student.id, contents, db)
+        student.photo_s3_key = s3_photos.upload_photo(student.id, contents, school_id=school_id, db=db)
     else:
         student.image_data = contents  # S3 not set up — fall back to the old DB blob
     student.parent_must_capture = False
@@ -1467,6 +1599,7 @@ async def parent_upload_photo_burst(
     files: List[UploadFile] = File(...),
     db: Session = Depends(auth.get_tenant_db),
     mc: tuple = Depends(auth.get_model_config),
+    school_id: Optional[int] = Depends(auth.get_school_id),
     current_user: models.User = Depends(auth.require_role("parent")),
 ):
     """Parent captures a short burst (several frames from a ~3s live capture) instead of
@@ -1492,6 +1625,8 @@ async def parent_upload_photo_burst(
     saved = 0
     for i, f in enumerate(files):
         contents = await _read_capped(f)
+        if not _looks_like_image(contents):
+            continue  # skip a non-image frame rather than failing the whole burst
         # Enrichment: embed the frame AS-IS plus a few mild, realistic lighting variants
         # (brighter/darker/contrast) of the same real frame — one parent capture ends up
         # giving the matcher reference points across more lighting conditions, with no
@@ -1504,11 +1639,11 @@ async def parent_upload_photo_burst(
             original = next((v for v in variants if v["variant"] == "original"), variants[0])
             first_vec = original["embedding"]
             if s3_photos.configured(db):
-                first_key = s3_photos.upload_photo_frame(student.id, i, contents, db)
+                first_key = s3_photos.upload_photo_frame(student.id, i, contents, school_id=school_id, db=db)
             else:
                 first_contents = contents
         elif s3_photos.configured(db):
-            s3_photos.upload_photo_frame(student.id, i, contents, db)
+            s3_photos.upload_photo_frame(student.id, i, contents, school_id=school_id, db=db)
 
         for v in variants:
             db.add(models.StudentEmbedding(
@@ -1978,8 +2113,7 @@ def submit_attendance(
     on_leave = []
     pending_leave = []
     today_dt = datetime.datetime.utcnow()
-    today_start = datetime.datetime.combine(today_dt.date(), datetime.time.min)
-    today_end = datetime.datetime.combine(today_dt.date(), datetime.time.max)
+    today_start, today_end = _school_today_range(db)
 
     all_student_ids = [s.id for s in all_students]
 
@@ -1989,7 +2123,7 @@ def submit_attendance(
             models.AttendanceRecord.student_id.in_(all_student_ids),
             models.AttendanceRecord.subject == req.subject,
             models.AttendanceRecord.date >= today_start,
-            models.AttendanceRecord.date <= today_end,
+            models.AttendanceRecord.date < today_end,
         ).all()
     }
 
@@ -2280,6 +2414,16 @@ def attendance_report_csv(
     return response
 
 
+def _pdf_safe(text: str) -> str:
+    """FPDF's core Helvetica font is Latin-1 only — a name/subject containing e.g.
+    Devanagari script or an emoji would otherwise raise partway through rendering,
+    turning a routine report download into a 500. Un-encodable characters are replaced
+    with '?' instead: the report still generates, just with a placeholder for anything
+    that font genuinely can't render (embedding a full Unicode font is the complete
+    fix, but needs bundling a real font file — this is the safe, dependency-free one)."""
+    return text.encode("latin-1", errors="replace").decode("latin-1")
+
+
 def _build_attendance_pdf_bytes(rows, subtitle_line):
     from fpdf import FPDF
     counts = {"present": 0, "absent": 0, "leave": 0}
@@ -2291,7 +2435,7 @@ def _build_attendance_pdf_bytes(rows, subtitle_line):
     pdf.set_font("Helvetica", "B", 14)
     pdf.cell(0, 10, "Attendance Report", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 7, subtitle_line, new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 7, _pdf_safe(subtitle_line), new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 7, f"Total records: {len(rows)}  |  Present: {counts['present']}  |  "
                    f"Absent: {counts['absent']}  |  Leave: {counts['leave']}",
               new_x="LMARGIN", new_y="NEXT")
@@ -2305,11 +2449,11 @@ def _build_attendance_pdf_bytes(rows, subtitle_line):
     pdf.ln()
     pdf.set_font("Helvetica", "", 9)
     for r in rows:
-        pdf.cell(col_widths[0], 7, r["date"], border=1)
-        pdf.cell(col_widths[1], 7, r["roll_no"][:17], border=1)
-        pdf.cell(col_widths[2], 7, r["name"][:28], border=1)
-        pdf.cell(col_widths[3], 7, r["subject"][:16], border=1)
-        pdf.cell(col_widths[4], 7, r["status"], border=1)
+        pdf.cell(col_widths[0], 7, _pdf_safe(r["date"]), border=1)
+        pdf.cell(col_widths[1], 7, _pdf_safe(r["roll_no"][:17]), border=1)
+        pdf.cell(col_widths[2], 7, _pdf_safe(r["name"][:28]), border=1)
+        pdf.cell(col_widths[3], 7, _pdf_safe(r["subject"][:16]), border=1)
+        pdf.cell(col_widths[4], 7, _pdf_safe(r["status"]), border=1)
         pdf.ln()
 
     return bytes(pdf.output())
@@ -2768,10 +2912,18 @@ def accept_onboarding_request(
     school = db.query(models.School).filter(models.School.id == school_id).first()
     if not school:
         raise HTTPException(status_code=404, detail="Not found")
-    if school.status != "submitted":
-        raise HTTPException(status_code=400, detail=f"Cannot accept a request in status '{school.status}'")
-    school.status = "provisioning"
+    # Atomic status transition (UPDATE ... WHERE status='submitted', not read-then-write)
+    # — closes a race where two near-simultaneous accept calls (double-click, retried
+    # request) could both pass a plain status check and spawn two competing
+    # provision_school runs for the same school, each generating its own model API key
+    # and potentially desyncing the stored key from whichever SSH setup finishes last.
+    updated = db.query(models.School).filter(
+        models.School.id == school_id, models.School.status == "submitted"
+    ).update({"status": "provisioning"})
     db.commit()
+    if not updated:
+        db.refresh(school)
+        raise HTTPException(status_code=400, detail=f"Cannot accept a request in status '{school.status}'")
     background_tasks.add_task(provisioning.provision_school, school.id)
     return {"message": "Provisioning started — this takes a few minutes"}
 
@@ -2789,11 +2941,14 @@ def retry_onboarding_request(
     school = db.query(models.School).filter(models.School.id == school_id).first()
     if not school:
         raise HTTPException(status_code=404, detail="Not found")
-    if school.status != "failed":
-        raise HTTPException(status_code=400, detail=f"Can only retry a request in status 'failed' (this one is '{school.status}')")
-    school.status = "provisioning"
-    school.provisioning_error = None
+    # Same atomic-transition reasoning as accept_onboarding_request above.
+    updated = db.query(models.School).filter(
+        models.School.id == school_id, models.School.status == "failed"
+    ).update({"status": "provisioning", "provisioning_error": None})
     db.commit()
+    if not updated:
+        db.refresh(school)
+        raise HTTPException(status_code=400, detail=f"Can only retry a request in status 'failed' (this one is '{school.status}')")
     background_tasks.add_task(provisioning.provision_school, school.id)
     return {"message": "Retrying — this takes a few minutes"}
 
@@ -2878,6 +3033,7 @@ def reset_school_admin_password(
             raise HTTPException(status_code=404, detail="Admin account not found in the school's database")
         new_password = auth.generate_compliant_password()
         admin_user.hashed_password = auth.get_password_hash(new_password)
+        admin_user.token_version = (admin_user.token_version or 0) + 1
         tsession.commit()
     finally:
         tsession.close()

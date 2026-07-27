@@ -11,6 +11,10 @@ class User(Base):
     email = Column(String, nullable=True)
     role = Column(String) # 'principal', 'admin', 'teacher', 'parent'
     student_id = Column(Integer, ForeignKey("students.id"), nullable=True) # Only for parents
+    # Bumped on every password reset/change so already-issued JWTs stop working
+    # immediately instead of remaining valid for their full 24h expiry — see auth.py's
+    # _tenant_context, which compares this against the token's own "tv" claim.
+    token_version = Column(Integer, default=0, nullable=False, server_default="0")
     
     student = relationship("Student", back_populates="parent_user", foreign_keys=[student_id])
 
@@ -30,6 +34,13 @@ class Section(Base):
     class_group = relationship("ClassGroup", back_populates="sections")
     students = relationship("Student", back_populates="section")
 
+    # Backs up the application-level duplicate check in create_section — that
+    # check-then-insert has the same TOCTOU race LeaveRequest was given a DB-level
+    # constraint for; this closes it here too.
+    __table_args__ = (
+        UniqueConstraint("class_id", "name", name="uq_section_class_name"),
+    )
+
 
 class Subject(Base):
     """Admin-managed, per-CLASS (not per-section — every section within the same class
@@ -41,6 +52,11 @@ class Subject(Base):
     id = Column(Integer, primary_key=True, index=True)
     class_id = Column(Integer, ForeignKey("classes.id"), index=True)
     name = Column(String, index=True)
+
+    # Same reasoning as Section above.
+    __table_args__ = (
+        UniqueConstraint("class_id", "name", name="uq_subject_class_name"),
+    )
 
 class Student(Base):
     __tablename__ = "students"
@@ -297,6 +313,12 @@ class RecognitionSettings(Base):
     __tablename__ = "recognition_settings"
     id = Column(Integer, primary_key=True, index=True)
     auto_check_threshold = Column(Float, nullable=True)
+    # Minutes offset from UTC for this school's own local time (e.g. 330 for IST,
+    # UTC+5:30). Defaults to 0 (pure UTC, today's exact existing behavior) — without
+    # this, "today" for attendance/leave-alert-cooldown purposes is always the UTC
+    # calendar day, which can be the wrong local day for a school outside UTC around
+    # midnight in either direction.
+    timezone_offset_minutes = Column(Integer, nullable=True)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 

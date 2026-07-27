@@ -9,6 +9,7 @@ class VOTE, then uses the actual cosine SIMILARITY to (a) reject far-away faces 
 Run:
     MATCHER_API_KEY=key python3 -m uvicorn matcher_api:app --host 0.0.0.0 --port 8000
 """
+import hmac
 import os
 from typing import List, Optional
 from collections import defaultdict
@@ -18,10 +19,22 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 from sklearn.neighbors import KNeighborsClassifier
 
-API_KEY = os.environ.get("MATCHER_API_KEY", "change-me")
+API_KEY = os.environ.get("MATCHER_API_KEY")
+if not API_KEY:
+    raise RuntimeError(
+        "MATCHER_API_KEY is not set — generate one with "
+        "`python3 -c \"import secrets; print(secrets.token_urlsafe(32))\"` "
+        "and put it in the server's env file. Refusing to run with auth as a no-op."
+    )
 PROBA_THRESHOLD = float(os.environ.get("MATCH_THRESHOLD", "0.50"))   # KNN vote confidence floor
 SIM_GATE = float(os.environ.get("MATCH_SIM_GATE", "0.40"))          # cosine similarity floor
 N_NEIGHBORS = int(os.environ.get("KNN_NEIGHBORS", "2"))
+# A legitimate class photo never has more than a few dozen faces, and no school's own
+# gallery has more than a few thousand reference embeddings — well under these caps.
+# Without a bound, any caller with the API key could force an arbitrarily large
+# allocation/KNN fit as a memory-exhaustion DoS against this process.
+MAX_QUERIES = 200
+MAX_GALLERY = 20000
 
 app = FastAPI(title="Face Match Instance")
 
@@ -52,8 +65,10 @@ def health():
 
 @app.post("/match")
 def match(req: MatchRequest, x_api_key: Optional[str] = Header(default=None)):
-    if x_api_key != API_KEY:
+    if not x_api_key or not hmac.compare_digest(x_api_key, API_KEY):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    if len(req.queries) > MAX_QUERIES or len(req.gallery) > MAX_GALLERY:
+        raise HTTPException(status_code=400, detail="Request exceeds the maximum allowed queries/gallery size")
 
     n = len(req.queries)
     proba_thr = req.threshold if req.threshold is not None else PROBA_THRESHOLD
