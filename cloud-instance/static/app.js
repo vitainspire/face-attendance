@@ -9,6 +9,20 @@ const state = {
     role: localStorage.getItem('role') || null,
 };
 
+// A backend error's `detail` is USUALLY a plain string, but FastAPI's own request
+// validation errors (missing/malformed query param, bad JSON body, etc.) return it as
+// an ARRAY of {loc, msg, type} objects instead — passing that straight into an alert()
+// or innerText renders as an unhelpful "[object Object]". This normalizes either shape
+// into one readable line.
+function errorMessage(err, fallback) {
+    const detail = err && err.detail;
+    if (typeof detail === 'string' && detail) return detail;
+    if (Array.isArray(detail) && detail.length) {
+        return detail.map(d => (d && d.msg) ? d.msg : JSON.stringify(d)).join('; ');
+    }
+    return fallback;
+}
+
 function authHeaders(extra = {}) {
     return { 'Authorization': `Bearer ${state.token}`, ...extra };
 }
@@ -399,7 +413,7 @@ async function deleteEvent(id, title) {
         await api(`/admin/events/${id}`, { method: 'DELETE' });
         await loadEvents();
     } catch (err) {
-        alert(err.detail || 'Failed to remove event');
+        alert(errorMessage(err, 'Failed to remove event'));
     }
 }
 
@@ -551,7 +565,7 @@ async function deleteStudent(id, name) {
         await api(`/admin/students/${id}`, { method: 'DELETE' });
         refreshStudents();
     } catch (err) {
-        alert(err.detail || 'Delete failed');
+        alert(errorMessage(err, 'Delete failed'));
     }
 }
 
@@ -592,7 +606,7 @@ async function restoreStudent(id, name) {
         loadDeletedStudents();
         refreshStudents();
     } catch (err) {
-        alert(err.detail || 'Restore failed');
+        alert(errorMessage(err, 'Restore failed'));
     }
 }
 
@@ -783,7 +797,7 @@ async function deleteTeacher(id, username) {
         await api(`/admin/teachers/${id}`, { method: 'DELETE' });
         loadTeachers();
     } catch (err) {
-        alert(err.detail || 'Failed to delete teacher');
+        alert(errorMessage(err, 'Failed to delete teacher'));
     }
 }
 
@@ -1383,7 +1397,7 @@ document.getElementById('btn-mark-notifs-read').addEventListener('click', async 
         await loadNotificationsPanel();
         await refreshNotificationBadge();
     } catch (err) {
-        alert(err.detail || 'Failed to mark notifications read');
+        alert(errorMessage(err, 'Failed to mark notifications read'));
     }
 });
 
@@ -1486,7 +1500,7 @@ document.getElementById('leave-form').addEventListener('submit', async (e) => {
         document.getElementById('leave-form').reset();
         loadParentLeaves();
     } catch (err) {
-        alert(err.detail || 'Failed to submit leave request');
+        alert(errorMessage(err, 'Failed to submit leave request'));
     }
 });
 
@@ -1537,6 +1551,12 @@ document.getElementById('tab-leaves').addEventListener('click', () => {
 
 async function loadTeacherLeaves() {
     const sec = parseInt(document.getElementById('leave_section').value);
+    if (!sec || Number.isNaN(sec)) {
+        // Fires as soon as the "Leave Requests" tab is clicked, which can race the
+        // section dropdown's own async load — with nothing selected yet there's no
+        // valid request to make, so wait rather than sending a doomed one.
+        return;
+    }
     try {
         const leaves = await api(`/teacher/leave?section_id=${sec}`);
         const list = document.getElementById('t-leave-list');
@@ -1575,7 +1595,7 @@ async function loadTeacherLeaves() {
             });
         }
     } catch (err) {
-        alert(err.detail || 'Failed to load leaves');
+        alert(errorMessage(err, 'Failed to load leaves'));
     }
 }
 document.getElementById('btn-load-leaves').addEventListener('click', loadTeacherLeaves);
@@ -1586,7 +1606,7 @@ async function updateLeave(id, subject, status) {
         loadTeacherLeaves();
         refreshPendingLeaveBadge();
     } catch (err) {
-        alert(err.detail || 'Failed to update leave');
+        alert(errorMessage(err, 'Failed to update leave'));
     }
 }
 
@@ -1791,7 +1811,7 @@ document.getElementById('attendance-form').addEventListener('submit', async (e) 
         setText('stat-unknown', unknown);
     } catch (err) {
         hide('loading');
-        alert(err.detail || 'Recognition failed');
+        alert(errorMessage(err, 'Recognition failed'));
     }
 });
 
@@ -1811,7 +1831,7 @@ document.getElementById('btn-mark-all-present').addEventListener('click', async 
         setText('stat-unknown', 0);
         show('attendance-result');
     } catch (err) {
-        alert(err.detail || 'Failed to load roster');
+        alert(errorMessage(err, 'Failed to load roster'));
     }
 });
 
@@ -1854,7 +1874,7 @@ document.getElementById('btn-submit-final').addEventListener('click', async () =
         hide('attendance-result');
         hide('absent-box');
     } catch (err) {
-        alert(err.detail || 'Submit failed');
+        alert(errorMessage(err, 'Submit failed'));
     }
 });
 
@@ -1969,7 +1989,7 @@ async function fetchAnalytics() {
         });
         renderTeacherCalendar(data.daily_stats || []);
     } catch (err) {
-        alert(err.detail || 'Failed to load analytics');
+        alert(errorMessage(err, 'Failed to load analytics'));
     }
 }
 
@@ -2168,7 +2188,7 @@ async function deleteSubject(id, name) {
         await api(`/admin/subjects/${id}`, { method: 'DELETE' });
         await renderSubjectsList();
     } catch (err) {
-        alert(err.detail || 'Failed to remove subject');
+        alert(errorMessage(err, 'Failed to remove subject'));
     }
 }
 
@@ -2277,7 +2297,7 @@ async function deleteAssignment(id) {
         await api(`/admin/teacher_assignments/${id}`, { method: 'DELETE' });
         await renderAssignmentsList();
     } catch (err) {
-        alert(err.detail || 'Failed to remove assignment');
+        alert(errorMessage(err, 'Failed to remove assignment'));
     }
 }
 
