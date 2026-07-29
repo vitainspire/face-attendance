@@ -94,7 +94,7 @@ async function populateFlatSectionDropdown(selectId) {
             sel.value = prev;
         }
     } catch (err) {
-        sel.innerHTML = `<option value="">${escapeHtml(err.detail || 'Failed to load sections')}</option>`;
+        sel.innerHTML = `<option value="">${escapeHtml(errorMessage(err, 'Failed to load sections'))}</option>`;
     }
 }
 
@@ -141,7 +141,7 @@ async function loadSubjectsForSection(sectionSelectId, subjectSelectId, keepAllO
         });
         if (!keepAllOption) subjectSel.selectedIndex = 0;
     } catch (err) {
-        subjectSel.innerHTML = `<option value="" disabled selected>${escapeHtml(err.detail || 'Failed to load subjects')}</option>`;
+        subjectSel.innerHTML = `<option value="" disabled selected>${escapeHtml(errorMessage(err, 'Failed to load subjects'))}</option>`;
     }
 }
 
@@ -277,7 +277,7 @@ document.getElementById('btn-submit-change-password').addEventListener('click', 
         show(okBox.id);
         setTimeout(() => hide('change-password-modal'), 1200);
     } catch (err) {
-        errBox.innerText = (err && err.detail) ? err.detail : 'Could not update password';
+        errBox.innerText = errorMessage(err, 'Could not update password');
         show(errBox.id);
     }
 });
@@ -345,7 +345,7 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
         routeAfterLogin(data);
     } catch (err) {
         const box = document.getElementById('login-error');
-        box.innerText = (err && err.detail) ? err.detail : 'Login failed';
+        box.innerText = errorMessage(err, 'Login failed');
         show('login-error');
     }
 });
@@ -403,7 +403,7 @@ async function loadEvents() {
             btn.addEventListener('click', () => deleteEvent(btn.dataset.delEvent, btn.dataset.title));
         });
     } catch (err) {
-        list.innerHTML = `<li><span class="hint">${escapeHtml(err.detail || 'Failed to load events')}</span></li>`;
+        list.innerHTML = `<li><span class="hint">${escapeHtml(errorMessage(err, 'Failed to load events'))}</span></li>`;
     }
 }
 
@@ -420,6 +420,8 @@ async function deleteEvent(id, title) {
 document.getElementById('event-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     hide('event-error');
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
     const title = document.getElementById('event_title').value.trim();
     const event_date = document.getElementById('event_date').value;
     const description = document.getElementById('event_description').value.trim();
@@ -428,8 +430,10 @@ document.getElementById('event-form').addEventListener('submit', async (e) => {
         document.getElementById('event-form').reset();
         await loadEvents();
     } catch (err) {
-        document.getElementById('event-error').innerText = err.detail || 'Failed to add event';
+        document.getElementById('event-error').innerText = errorMessage(err, 'Failed to add event');
         show('event-error');
+    } finally {
+        if (submitBtn) submitBtn.disabled = false;
     }
 });
 
@@ -453,7 +457,7 @@ async function loadClasses() {
             c.sections.forEach(s => { SECTION_LABELS[s.id] = `${c.name} - ${s.name}`; });
         });
     } catch (err) {
-        classSel.innerHTML = `<option>${escapeHtml(err.detail || 'Failed to load classes')}</option>`;
+        classSel.innerHTML = `<option>${escapeHtml(errorMessage(err, 'Failed to load classes'))}</option>`;
     }
 }
 
@@ -520,7 +524,7 @@ async function loadStudents(sectionId) {
             btn.addEventListener('click', () => resetParent(btn.dataset.reset, btn.dataset.name));
         });
     } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="8">${escapeHtml(err.detail || 'Failed to load')}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8">${escapeHtml(errorMessage(err, 'Failed to load'))}</td></tr>`;
     }
 }
 
@@ -553,7 +557,7 @@ document.getElementById('btn-save-edit').addEventListener('click', async () => {
         refreshStudents();
     } catch (err) {
         const box = document.getElementById('edit-error');
-        box.innerText = err.detail || 'Update failed';
+        box.innerText = errorMessage(err, 'Update failed');
         show('edit-error');
     }
 });
@@ -594,7 +598,7 @@ async function loadDeletedStudents() {
             btn.addEventListener('click', () => restoreStudent(btn.dataset.restore, btn.dataset.name));
         });
     } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="5">${escapeHtml(err.detail || 'Failed to load')}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5">${escapeHtml(errorMessage(err, 'Failed to load'))}</td></tr>`;
     }
 }
 
@@ -625,7 +629,7 @@ async function resetParent(id, name) {
         show('students-msg');
     } catch (err) {
         box.className = 'result-box error-text';
-        box.innerText = err.detail || 'Reset failed';
+        box.innerText = errorMessage(err, 'Reset failed');
         show('students-msg');
     }
 }
@@ -683,7 +687,7 @@ document.getElementById('link-child-form').addEventListener('submit', async (e) 
         document.getElementById('link-child-form').reset();
         loadLinkChildOptions();
     } catch (err) {
-        document.getElementById('link-child-error').innerText = err.detail || 'Failed to link child';
+        document.getElementById('link-child-error').innerText = errorMessage(err, 'Failed to link child');
         show('link-child-error');
     }
 });
@@ -692,6 +696,8 @@ document.getElementById('link-child-form').addEventListener('submit', async (e) 
 document.getElementById('register-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     hide('register-error'); hide('credentials-box');
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
     try {
         const data = await api('/admin/register_student', {
             method: 'POST',
@@ -707,8 +713,10 @@ document.getElementById('register-form').addEventListener('submit', async (e) =>
         document.getElementById('register-form').reset();
     } catch (err) {
         const box = document.getElementById('register-error');
-        box.innerText = typeof err.detail === 'string' ? err.detail : JSON.stringify(err.detail);
+        box.innerText = errorMessage(err, 'Registration failed');
         show('register-error');
+    } finally {
+        if (submitBtn) submitBtn.disabled = false;
     }
 });
 
@@ -716,6 +724,8 @@ document.getElementById('register-form').addEventListener('submit', async (e) =>
 document.getElementById('teacher-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     hide('teacher-error'); hide('teacher-credentials-box');
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
     try {
         const data = await api('/admin/register_teacher', {
             method: 'POST',
@@ -731,8 +741,10 @@ document.getElementById('teacher-form').addEventListener('submit', async (e) => 
         loadTeachers();
     } catch (err) {
         const box = document.getElementById('teacher-error');
-        box.innerText = typeof err.detail === 'string' ? err.detail : JSON.stringify(err.detail);
+        box.innerText = errorMessage(err, 'Registration failed');
         show('teacher-error');
+    } finally {
+        if (submitBtn) submitBtn.disabled = false;
     }
 });
 
@@ -769,7 +781,7 @@ async function loadTeachers() {
             btn.addEventListener('click', () => deleteTeacher(btn.dataset.delTeacher, btn.dataset.name));
         });
     } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="4">${escapeHtml(err.detail || 'Failed to load teachers')}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="4">${escapeHtml(errorMessage(err, 'Failed to load teachers'))}</td></tr>`;
     }
 }
 
@@ -785,7 +797,7 @@ async function resetTeacherPassword(id, username) {
         box.className = 'result-box success-box';
         show('teacher-reset-box');
     } catch (err) {
-        box.innerText = err.detail || 'Failed to reset password';
+        box.innerText = errorMessage(err, 'Failed to reset password');
         box.className = 'result-box error-text';
         show('teacher-reset-box');
     }
@@ -827,7 +839,7 @@ async function loadEmbedClasses() {
             c.sections.forEach(s => { SECTION_LABELS[s.id] = `${c.name} - ${s.name}`; });
         });
     } catch (err) {
-        classSel.innerHTML = `<option>${escapeHtml(err.detail || 'Failed to load classes')}</option>`;
+        classSel.innerHTML = `<option>${escapeHtml(errorMessage(err, 'Failed to load classes'))}</option>`;
     }
 }
 
@@ -873,7 +885,7 @@ async function checkEmbeddingStatus() {
         }
         box.innerHTML = html;
     } catch (err) {
-        box.innerText = err.detail || 'Failed to load status';
+        box.innerText = errorMessage(err, 'Failed to load status');
     }
 }
 document.getElementById('btn-check-status').addEventListener('click', checkEmbeddingStatus);
@@ -890,7 +902,7 @@ document.getElementById('btn-generate').addEventListener('click', async () => {
         if (err.detail && err.detail.missing_roll_nos) {
             box.innerHTML = `<span class="error-text">${escapeHtml(err.detail.message)}</span><br>Missing: ${err.detail.missing_roll_nos.map(escapeHtml).join(', ')}`;
         } else {
-            box.innerText = typeof err.detail === 'string' ? err.detail : JSON.stringify(err.detail);
+            box.innerText = errorMessage(err, 'Failed to generate embeddings');
         }
     }
 });
@@ -983,7 +995,7 @@ async function uploadParentPhoto(fileOrBlob, filename) {
         setTimeout(() => { showView('parent-dashboard-view'); loadParentDashboard(); }, 1200);
         return true;
     } catch (err) {
-        box.innerText = (err.detail || 'Upload failed') + ' — please try a clearer, front-facing photo.';
+        box.innerText = (errorMessage(err, 'Upload failed')) + ' — please try a clearer, front-facing photo.';
         return false;
     }
 }
@@ -1011,7 +1023,7 @@ document.getElementById('btn-upload-photo').addEventListener('click', async () =
             setTimeout(() => { showView('parent-dashboard-view'); loadParentDashboard(); }, 1200);
         }
     } catch (err) {
-        box.innerText = (err.detail || 'Upload failed') + ' — please retake, keeping the face centered.';
+        box.innerText = (errorMessage(err, 'Upload failed')) + ' — please retake, keeping the face centered.';
         document.getElementById('btn-retake').click();
     }
 });
@@ -1193,8 +1205,13 @@ document.getElementById('child-switcher').addEventListener('change', (e) => {
 });
 
 async function loadParentDashboard() {
+    // Captured before the request goes out — if the parent switches to a different
+    // child while this is in flight, a slower response for the OLD child must not
+    // overwrite the newer child's already-rendered dashboard once it lands.
+    const requestedChildId = currentChildId;
     try {
         const data = await api(withChildQS('/parent/attendance'));
+        if (currentChildId !== requestedChildId) return;
         setText('p-pct', data.percentage + '%');
         setText('p-present', `${data.present}`);
         setText('p-total', `${data.unique_days} Day${data.unique_days !== 1 ? 's' : ''}, ${data.total} Class${data.total !== 1 ? 'es' : ''}`);
@@ -1253,7 +1270,7 @@ async function loadParentDashboard() {
         loadParentLeaves();
         loadParentEvents();
     } catch (err) {
-        setText('p-student', err.detail || 'Failed to load');
+        setText('p-student', errorMessage(err, 'Failed to load'));
     }
 }
 
@@ -1380,7 +1397,7 @@ async function loadNotificationsPanel() {
             list.appendChild(bubble);
         });
     } catch (err) {
-        list.innerHTML = `<p class="hint">${escapeHtml(err.detail || 'Failed to load notifications')}</p>`;
+        list.innerHTML = `<p class="hint">${escapeHtml(errorMessage(err, 'Failed to load notifications'))}</p>`;
     }
 }
 
@@ -1437,7 +1454,7 @@ async function loadTeacherNotificationsPanel() {
             btn.addEventListener('click', () => rejectTeacherNotifLeave(btn.dataset.rejectLeave, btn.dataset.subject));
         });
     } catch (err) {
-        list.innerHTML = `<p class="hint">${escapeHtml(err.detail || 'Failed to load leave requests')}</p>`;
+        list.innerHTML = `<p class="hint">${escapeHtml(errorMessage(err, 'Failed to load leave requests'))}</p>`;
     }
 }
 
@@ -1491,6 +1508,8 @@ document.getElementById('btn-p-report-pdf').addEventListener('click', async () =
 
 document.getElementById('leave-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
     const start = document.getElementById('leave_start').value;
     const end = document.getElementById('leave_end').value;
     const reason = document.getElementById('leave_reason').value;
@@ -1501,6 +1520,8 @@ document.getElementById('leave-form').addEventListener('submit', async (e) => {
         loadParentLeaves();
     } catch (err) {
         alert(errorMessage(err, 'Failed to submit leave request'));
+    } finally {
+        if (submitBtn) submitBtn.disabled = false;
     }
 });
 
@@ -1766,6 +1787,8 @@ async function submitAndPollRecognize(form) {
 
 document.getElementById('attendance-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
     show('loading'); hide('attendance-result'); hide('absent-box');
     currentSection = parseInt(document.getElementById('att_section_id').value);
     const subj = document.getElementById('attendance_subject').value || 'General';
@@ -1812,6 +1835,8 @@ document.getElementById('attendance-form').addEventListener('submit', async (e) 
     } catch (err) {
         hide('loading');
         alert(errorMessage(err, 'Recognition failed'));
+    } finally {
+        if (submitBtn) submitBtn.disabled = false;
     }
 });
 
@@ -2000,9 +2025,9 @@ async function downloadAuthed(url, filename, errBoxId) {
     try {
         const res = await fetch(API_BASE + url, { headers: authHeaders() });
         if (!res.ok) {
-            let detail = `Request failed (${res.status})`;
-            try { detail = (await res.json()).detail || detail; } catch (_) {}
-            throw new Error(detail);
+            let body = null;
+            try { body = await res.json(); } catch (_) {}
+            throw new Error(errorMessage(body, `Request failed (${res.status})`));
         }
         const blob = await res.blob();
         const objectUrl = window.URL.createObjectURL(blob);
@@ -2036,7 +2061,7 @@ async function loadReportClasses() {
             classSel.appendChild(opt);
         });
     } catch (err) {
-        classSel.innerHTML = `<option>${escapeHtml(err.detail || 'Failed to load classes')}</option>`;
+        classSel.innerHTML = `<option>${escapeHtml(errorMessage(err, 'Failed to load classes'))}</option>`;
     }
 }
 document.getElementById('report_class').addEventListener('change', async (e) => {
@@ -2130,7 +2155,7 @@ async function populateSubjectsClassDropdown() {
             renderSubjectsList();
         }
     } catch (err) {
-        sel.innerHTML = `<option>${escapeHtml(err.detail || 'Failed to load classes')}</option>`;
+        sel.innerHTML = `<option>${escapeHtml(errorMessage(err, 'Failed to load classes'))}</option>`;
     }
 }
 
@@ -2156,7 +2181,7 @@ async function renderSubjectsList() {
             btn.addEventListener('click', () => deleteSubject(btn.dataset.delSubject, btn.dataset.name));
         });
     } catch (err) {
-        list.innerHTML = `<li><span class="hint">${escapeHtml(err.detail || 'Failed to load subjects')}</span></li>`;
+        list.innerHTML = `<li><span class="hint">${escapeHtml(errorMessage(err, 'Failed to load subjects'))}</span></li>`;
     }
 }
 
@@ -2172,13 +2197,17 @@ document.getElementById('subject-form').addEventListener('submit', async (e) => 
         show('subject-error');
         return;
     }
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
     try {
         await api('/admin/subjects', { method: 'POST', json: { class_id, name } });
         document.getElementById('new_subject_name').value = '';
         await renderSubjectsList();
     } catch (err) {
-        document.getElementById('subject-error').innerText = err.detail || 'Failed to add subject';
+        document.getElementById('subject-error').innerText = errorMessage(err, 'Failed to add subject');
         show('subject-error');
+    } finally {
+        if (submitBtn) submitBtn.disabled = false;
     }
 });
 
@@ -2206,7 +2235,7 @@ async function populateAssignmentClassDropdown() {
             sel.appendChild(opt);
         });
     } catch (err) {
-        sel.innerHTML = `<option>${escapeHtml(err.detail || 'Failed to load classes')}</option>`;
+        sel.innerHTML = `<option>${escapeHtml(errorMessage(err, 'Failed to load classes'))}</option>`;
     }
 }
 
@@ -2222,7 +2251,7 @@ async function populateAssignmentTeacherDropdown() {
             sel.appendChild(opt);
         });
     } catch (err) {
-        sel.innerHTML = `<option>${escapeHtml(err.detail || 'Failed to load teachers')}</option>`;
+        sel.innerHTML = `<option>${escapeHtml(errorMessage(err, 'Failed to load teachers'))}</option>`;
     }
 }
 
@@ -2260,7 +2289,7 @@ document.getElementById('assign_section').addEventListener('change', async (e) =
         });
         subjSel.disabled = false;
     } catch (err) {
-        subjSel.innerHTML = `<option>${escapeHtml(err.detail || 'Failed to load subjects')}</option>`;
+        subjSel.innerHTML = `<option>${escapeHtml(errorMessage(err, 'Failed to load subjects'))}</option>`;
     }
     renderAssignmentsList();
 });
@@ -2287,7 +2316,7 @@ async function renderAssignmentsList() {
             btn.addEventListener('click', () => deleteAssignment(btn.dataset.delAssignment));
         });
     } catch (err) {
-        list.innerHTML = `<li><span class="hint">${escapeHtml(err.detail || 'Failed to load assignments')}</span></li>`;
+        list.innerHTML = `<li><span class="hint">${escapeHtml(errorMessage(err, 'Failed to load assignments'))}</span></li>`;
     }
 }
 
@@ -2312,12 +2341,16 @@ document.getElementById('assignment-form').addEventListener('submit', async (e) 
         show('assignment-error');
         return;
     }
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
     try {
         await api('/admin/teacher_assignments', { method: 'POST', json: { teacher_id, section_id, subject } });
         await renderAssignmentsList();
     } catch (err) {
-        document.getElementById('assignment-error').innerText = err.detail || 'Failed to create assignment';
+        document.getElementById('assignment-error').innerText = errorMessage(err, 'Failed to create assignment');
         show('assignment-error');
+    } finally {
+        if (submitBtn) submitBtn.disabled = false;
     }
 });
 
@@ -2333,7 +2366,7 @@ async function populateSectionClassDropdown() {
             sel.appendChild(opt);
         });
     } catch (err) {
-        sel.innerHTML = `<option>${escapeHtml(err.detail || 'Failed to load classes')}</option>`;
+        sel.innerHTML = `<option>${escapeHtml(errorMessage(err, 'Failed to load classes'))}</option>`;
     }
 }
 
@@ -2354,7 +2387,7 @@ async function renderClassesTable() {
             tbody.appendChild(tr);
         });
     } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="2">${escapeHtml(err.detail || 'Failed to load classes')}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="2">${escapeHtml(errorMessage(err, 'Failed to load classes'))}</td></tr>`;
     }
 }
 
@@ -2362,6 +2395,8 @@ document.getElementById('class-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     hide('class-error'); hide('class-success');
     const name = document.getElementById('new_class_name').value.trim();
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
     try {
         await api('/admin/classes', { method: 'POST', json: { name } });
         document.getElementById('class-success').innerText = `Class "${name}" added.`;
@@ -2371,8 +2406,10 @@ document.getElementById('class-form').addEventListener('submit', async (e) => {
         await renderClassesTable();
         await populateAdminFlatDropdowns();
     } catch (err) {
-        document.getElementById('class-error').innerText = err.detail || 'Failed to add class';
+        document.getElementById('class-error').innerText = errorMessage(err, 'Failed to add class');
         show('class-error');
+    } finally {
+        if (submitBtn) submitBtn.disabled = false;
     }
 });
 
@@ -2386,6 +2423,8 @@ document.getElementById('section-form').addEventListener('submit', async (e) => 
         show('section-error');
         return;
     }
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
     try {
         await api('/admin/sections', { method: 'POST', json: { class_id, name } });
         document.getElementById('section-success').innerText = `Section "${name}" added.`;
@@ -2394,8 +2433,10 @@ document.getElementById('section-form').addEventListener('submit', async (e) => 
         await renderClassesTable();
         await populateAdminFlatDropdowns();
     } catch (err) {
-        document.getElementById('section-error').innerText = err.detail || 'Failed to add section';
+        document.getElementById('section-error').innerText = errorMessage(err, 'Failed to add section');
         show('section-error');
+    } finally {
+        if (submitBtn) submitBtn.disabled = false;
     }
 });
 
@@ -2415,7 +2456,7 @@ async function loadS3Settings() {
         }
     } catch (err) {
         box.className = 'result-box error-text';
-        box.innerText = err.detail || 'Failed to load storage status';
+        box.innerText = errorMessage(err, 'Failed to load storage status');
     }
 }
 
@@ -2437,7 +2478,7 @@ document.getElementById('s3-settings-form').addEventListener('submit', async (e)
         document.getElementById('s3-settings-form').reset();
         loadS3Settings();
     } catch (err) {
-        document.getElementById('s3-settings-error').innerText = err.detail || 'Failed to save storage settings';
+        document.getElementById('s3-settings-error').innerText = errorMessage(err, 'Failed to save storage settings');
         show('s3-settings-error');
     }
 });
@@ -2458,7 +2499,7 @@ async function loadRecognitionSettings() {
             : `Custom threshold set: ${pct}%.`;
     } catch (err) {
         box.className = 'result-box error-text';
-        box.innerText = err.detail || 'Failed to load recognition settings';
+        box.innerText = errorMessage(err, 'Failed to load recognition settings');
     }
 }
 
@@ -2479,7 +2520,7 @@ document.getElementById('btn-save-recognition').addEventListener('click', async 
         show('recognition-settings-success');
         loadRecognitionSettings();
     } catch (err) {
-        document.getElementById('recognition-settings-error').innerText = err.detail || 'Failed to save';
+        document.getElementById('recognition-settings-error').innerText = errorMessage(err, 'Failed to save');
         show('recognition-settings-error');
     }
 });
@@ -2519,44 +2560,3 @@ document.getElementById('btn-save-recognition').addEventListener('click', async 
         showView('login-view');
     }
 })();
-
-// ===================== AI Aesthetic UI Logic =====================
-
-// 1. Cursor Glow Tracking for primary buttons
-document.addEventListener('mousemove', (e) => {
-    document.querySelectorAll('button.primary-btn').forEach(btn => {
-        const rect = btn.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        btn.style.setProperty('--x', `${x}px`);
-        btn.style.setProperty('--y', `${y}px`);
-    });
-});
-
-// 2. Intersection Observer for Scroll Animations (.reveal classes)
-const revealObserver = new IntersectionObserver((entries) => {
-    entries.forEach(entry => {
-        if (entry.isIntersecting) {
-            entry.target.classList.add('active');
-        } else {
-            entry.target.classList.remove('active');
-        }
-    });
-}, { threshold: 0.1 });
-
-// Initialize observer on load and observe all reveal elements
-window.addEventListener('DOMContentLoaded', () => {
-    document.querySelectorAll('.reveal').forEach(el => revealObserver.observe(el));
-});
-
-// Re-scan when switching views, as display:none might reset them
-const originalShowView = window.showView;
-if (typeof showView !== 'undefined') {
-    const _showView = showView;
-    window.showView = function(id) {
-        _showView(id);
-        setTimeout(() => {
-            document.querySelectorAll('.reveal').forEach(el => revealObserver.observe(el));
-        }, 50);
-    };
-}

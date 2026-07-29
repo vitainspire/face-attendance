@@ -10,6 +10,19 @@ const API_BASE = 'https://16-192-137-111.sslip.io';
 function hide(id) { document.getElementById(id).classList.add('hidden'); }
 function show(id) { document.getElementById(id).classList.remove('hidden'); }
 
+// See app.js's identical helper — a backend error's `detail` is USUALLY a plain
+// string, but FastAPI's own request validation errors return it as an ARRAY of
+// {loc, msg, type} objects instead, which renders as "[object Object]" if passed
+// straight into an alert()/innerText/innerHTML. This normalizes either shape.
+function errorMessage(err, fallback) {
+    const detail = err && err.detail;
+    if (typeof detail === 'string' && detail) return detail;
+    if (Array.isArray(detail) && detail.length) {
+        return detail.map(d => (d && d.msg) ? d.msg : JSON.stringify(d)).join('; ');
+    }
+    return fallback;
+}
+
 // Escapes free-text before it goes into innerHTML. Critical here specifically: elastic_ip
 // is submitted by the SCHOOL during onboarding (an untrusted party at that point — that's
 // the whole reason there's a review/approve step) and rendered straight into this table.
@@ -85,7 +98,7 @@ document.getElementById('sa-login-form').addEventListener('submit', async (e) =>
         saToken = data.access_token;
         routeIn();
     } catch (err) {
-        document.getElementById('sa-login-error').innerText = (err && err.detail) ? err.detail : 'Login failed';
+        document.getElementById('sa-login-error').innerText = errorMessage(err, 'Login failed');
         show('sa-login-error');
     }
 });
@@ -107,7 +120,7 @@ document.getElementById('sa-create-link-form').addEventListener('submit', async 
         document.getElementById('sa-create-link-form').reset();
         loadRequests();
     } catch (err) {
-        document.getElementById('sa-create-error').innerText = err.detail || 'Failed to create link';
+        document.getElementById('sa-create-error').innerText = errorMessage(err, 'Failed to create link');
         show('sa-create-error');
     }
 });
@@ -154,7 +167,7 @@ async function loadRequests() {
             tbody.appendChild(tr);
         });
     } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="6">${escapeHtml(err.detail || 'Failed to load')}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6">${escapeHtml(errorMessage(err, 'Failed to load'))}</td></tr>`;
     }
 }
 document.getElementById('btn-refresh-requests').addEventListener('click', loadRequests);
@@ -165,7 +178,7 @@ window.acceptRequest = async function (id) {
         await saApi(`/superadmin/onboarding_requests/${id}/accept`, { method: 'POST' });
         loadRequests();
     } catch (err) {
-        alert(err.detail || 'Failed to accept');
+        alert(errorMessage(err, 'Failed to accept'));
     }
 };
 
@@ -176,7 +189,7 @@ window.rejectRequest = async function (id) {
         await saApi(`/superadmin/onboarding_requests/${id}/reject`, { method: 'POST', json: { reason } });
         loadRequests();
     } catch (err) {
-        alert(err.detail || 'Failed to reject');
+        alert(errorMessage(err, 'Failed to reject'));
     }
 };
 
@@ -189,7 +202,7 @@ window.deleteRequest = async function (id, status) {
         await saApi(`/superadmin/onboarding_requests/${id}`, { method: 'DELETE' });
         loadRequests();
     } catch (err) {
-        alert(err.detail || 'Failed to delete');
+        alert(errorMessage(err, 'Failed to delete'));
     }
 };
 
@@ -199,7 +212,7 @@ window.stopService = async function (id) {
         await saApi(`/superadmin/onboarding_requests/${id}/stop_service`, { method: 'POST' });
         loadRequests();
     } catch (err) {
-        alert(err.detail || 'Failed to stop service');
+        alert(errorMessage(err, 'Failed to stop service'));
     }
 };
 
@@ -208,7 +221,7 @@ window.startService = async function (id) {
         await saApi(`/superadmin/onboarding_requests/${id}/start_service`, { method: 'POST' });
         loadRequests();
     } catch (err) {
-        alert(err.detail || 'Failed to start service');
+        alert(errorMessage(err, 'Failed to start service'));
     }
 };
 
@@ -224,7 +237,7 @@ window.resetAdminPassword = async function (id) {
         box.className = 'result-box success-box';
         show('sa-reset-password-box');
     } catch (err) {
-        box.innerText = err.detail || 'Failed to reset password';
+        box.innerText = errorMessage(err, 'Failed to reset password');
         box.className = 'result-box error-text';
         show('sa-reset-password-box');
     }

@@ -18,6 +18,16 @@ MODEL_URL = os.environ.get("MODEL_URL", "http://localhost:9100")
 MODEL_KEY = os.environ.get("LOCAL_MODEL_KEY", "change-me")
 
 
+class InvalidImageError(Exception):
+    """Raised (by both local and remote backends, identically) when the uploaded bytes
+    can't be decoded as an image at all — distinct from "decoded fine, zero faces
+    found" (which returns None/[] as before) and distinct from a model-service
+    connectivity failure (still a requests.exceptions.RequestException). Previously
+    local mode swallowed this into a silent None/[] (indistinguishable from "no face"),
+    while remote mode's HTTPError got caught by the blanket RequestException handler and
+    misreported as "model service unreachable" — neither surfaced the real problem."""
+
+
 if MODE == "local":
     import cv2
     import numpy as np
@@ -38,6 +48,11 @@ if MODE == "local":
                 img = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
             except Exception:
                 img = None
+        if img is None:
+            # Matches local_model_service.py's remote-mode equivalent, which raises
+            # HTTPException(400, "Invalid image file") for the same case — undecodable
+            # bytes are a real error, not "photo decoded fine, zero faces visible".
+            raise InvalidImageError("Invalid image file")
         return img
 
     def _crop_b64(img, bbox):
@@ -60,15 +75,11 @@ if MODE == "local":
 
     def embed_largest(contents: bytes, model_url=None, model_key=None):
         img = _decode(contents)
-        if img is None:
-            return None
         v = engines.get_engine().embed_largest(img)
         return v.tolist() if v is not None else None
 
     def embed_largest_variants(contents: bytes, model_url=None, model_key=None):
         img = _decode(contents)
-        if img is None:
-            return []
         eng = engines.get_engine()
         out = []
         for variant_name, variant_img in engines.generate_lighting_variants(img):
@@ -79,8 +90,6 @@ if MODE == "local":
 
     def detect_embed(contents: bytes, model_url=None, model_key=None):
         img = _decode(contents)
-        if img is None:
-            return []
         out = []
         for d in engines.get_engine().detect_and_embed_all(img):
             emb = d["embedding"]
@@ -178,6 +187,19 @@ else:  # remote
         both keeps exactly the original single-tenant behavior."""
         return _sanitize_model_url(model_url or MODEL_URL), model_key or MODEL_KEY
 
+    def _raise_for_status(r):
+        """Like r.raise_for_status(), but a 400 (local_model_service.py's "Invalid image
+        file" response) becomes InvalidImageError instead of requests.HTTPError — so it
+        surfaces as a real client-facing 400, not main.py's blanket "model service
+        unreachable" 503 that every OTHER RequestException gets mapped to."""
+        if r.status_code == 400:
+            try:
+                detail = r.json().get("detail", "Invalid image file")
+            except ValueError:
+                detail = "Invalid image file"
+            raise InvalidImageError(detail)
+        r.raise_for_status()
+
     def engine_name(model_url=None, model_key=None):
         return _get_info(*_resolve(model_url, model_key)).get("engine")
 
@@ -189,7 +211,7 @@ else:  # remote
         r = requests.post(url + "/embed_largest",
                           files={"file": ("image.jpg", contents)},
                           headers={"x-api-key": key}, timeout=60)
-        r.raise_for_status()
+        _raise_for_status(r)
         return r.json().get("embedding")
 
     def embed_largest_variants(contents: bytes, model_url=None, model_key=None):
@@ -197,7 +219,7 @@ else:  # remote
         r = requests.post(url + "/embed_largest_variants",
                           files={"file": ("image.jpg", contents)},
                           headers={"x-api-key": key}, timeout=60)
-        r.raise_for_status()
+        _raise_for_status(r)
         return r.json().get("variants", [])
 
     def detect_embed(contents: bytes, model_url=None, model_key=None):
@@ -205,7 +227,7 @@ else:  # remote
         r = requests.post(url + "/detect_embed",
                           files={"file": ("image.jpg", contents)},
                           headers={"x-api-key": key}, timeout=120)
-        r.raise_for_status()
+        _raise_for_status(r)
         return r.json().get("faces", [])
 
     def detect_embed_from_path(path: str, model_url=None, model_key=None):
@@ -219,5 +241,5 @@ else:  # remote
             r = requests.post(url + "/detect_embed",
                               files={"file": ("image.jpg", fh)},
                               headers={"x-api-key": key}, timeout=90)
-        r.raise_for_status()
+        _raise_for_status(r)
         return r.json().get("faces", [])

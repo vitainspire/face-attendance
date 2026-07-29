@@ -97,7 +97,11 @@ class BaseEngine:
         if n == 0:
             return []
         if refs is None or len(refs) == 0:
-            return [{"student_id": None, "closest_id": None, "score": 0.0, "status": "unknown"}] * n
+            # A list comprehension, NOT `[{...}] * n` — the latter repeats ONE shared
+            # dict reference n times, so any caller that later attaches a per-result
+            # field (e.g. query_index) to each entry ends up mutating a single object,
+            # silently making every "unknown" result identical to the last one touched.
+            return [{"student_id": None, "closest_id": None, "score": 0.0, "status": "unknown"} for _ in range(n)]
 
         q = np.asarray(queries, dtype="float32")
         r = np.asarray(refs, dtype="float32")

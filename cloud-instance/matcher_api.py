@@ -130,11 +130,18 @@ def match(req: MatchRequest, x_api_key: Optional[str] = Header(default=None)):
     for p in pred:
         i = p["i"]
         if i in assigned:
+            # "recognized": score is the KNN vote confidence (proba) for the assigned
+            # student — the caller displays this as "how sure are we this is them".
             matches.append({"query_index": i, "student_id": p["cls"], "closest_id": p["cls"],
                             "score": round(p["proba"], 4), "sim": round(p["sim"], 4),
                             "status": "recognized"})
         else:
-            # not matched (failed a gate, or its identity was claimed by a closer face)
+            # "unknown": there's no assigned student to have vote-confidence about, so
+            # score instead carries the raw cosine similarity to the closest candidate —
+            # the caller displays this as "how close it got" to closest_match. `sim` is
+            # always this same cosine value regardless of status; `score` is NOT a
+            # uniform metric across statuses, deliberately — a consumer that wants one
+            # consistent number regardless of status should read `sim`, not `score`.
             matches.append({"query_index": i, "student_id": None, "closest_id": p["cls"],
                             "score": round(p["sim"], 4), "sim": round(p["sim"], 4),
                             "status": "unknown"})

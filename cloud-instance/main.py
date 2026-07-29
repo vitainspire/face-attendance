@@ -101,6 +101,14 @@ async def model_service_unreachable_handler(request: Request, exc: requests.exce
     )
 
 
+@app.exception_handler(model_client.InvalidImageError)
+async def invalid_image_handler(request: Request, exc: model_client.InvalidImageError):
+    """A genuinely undecodable upload — NOT a model-service connectivity problem, so it
+    must not fall into the 503 handler above (model_client.InvalidImageError is not a
+    RequestException, so it won't)."""
+    return JSONResponse(status_code=400, content={"detail": str(exc) or "Invalid image file"})
+
+
 # --- Recognize queue -------------------------------------------------------------
 # /teacher/recognize used to read the whole photo into memory and process it inline,
 # with no limit on how many could happen at once — a load test this session showed that
@@ -320,14 +328,19 @@ def bulk_leave_status_for_subject(student_ids, subject: str, db: Session, on_dat
     English one for the same days. Students with no leave request at all for this
     subject/date (or one that was rejected) are absent from the returned dict, meaning
     "handle as a normal absence" for the caller. ONE query instead of one lookup per
-    student."""
+    student.
+
+    `subject` is matched case-insensitively (same normalization as teacher_can_act_on) —
+    submit_attendance's `subject` is arbitrary free-form input, so a submission of
+    "hindi" must still find an approval stored against the canonical "Hindi"."""
     if not student_ids:
         return {}
+    normalized_subject = (subject or "").strip().lower()
     rows = db.query(models.LeaveApproval.status, models.LeaveRequest.student_id).join(
         models.LeaveRequest, models.LeaveApproval.leave_request_id == models.LeaveRequest.id
     ).filter(
         models.LeaveRequest.student_id.in_(student_ids),
-        models.LeaveApproval.subject == subject,
+        func.lower(models.LeaveApproval.subject) == normalized_subject,
         models.LeaveApproval.status.in_(["approved", "pending"]),
         models.LeaveRequest.start_date <= on_date,
         models.LeaveRequest.end_date >= on_date,
@@ -708,13 +721,13 @@ def embedding_status(
     students = query.all()
     missing = [
         {"roll_no": s.roll_no, "name": s.name}
-        for s in students if not s3_photos.has_photo(s)
+        for s in students if not s3_photos.has_photo(s, db)
     ]
     # "pending" = has a photo but no embedding from the CURRENT engine (covers engine switches).
     pending_embeddings = [
         {"roll_no": s.roll_no, "name": s.name}
         for s in students
-        if s3_photos.has_photo(s) and (not s.embedding_vector or s.embedding_model != eng_name)
+        if s3_photos.has_photo(s, db) and (not s.embedding_vector or s.embedding_model != eng_name)
     ]
     return {
         "total_students": len(students),
@@ -741,7 +754,7 @@ def generate_embeddings(
         query = query.filter(models.Student.section_id == section_id)
     students = query.all()
 
-    missing = [s.roll_no for s in students if not s3_photos.has_photo(s)]
+    missing = [s.roll_no for s in students if not s3_photos.has_photo(s, db)]
     if missing:
         raise HTTPException(
             status_code=400,
@@ -754,7 +767,11 @@ def generate_embeddings(
     eng_name = model_client.engine_name(model_url=mc[0], model_key=mc[1])
     generated, skipped = 0, []
     for s in students:
-        vec = model_client.embed_largest(s3_photos.get_photo_bytes(s, db), model_url=mc[0], model_key=mc[1])
+        try:
+            vec = model_client.embed_largest(s3_photos.get_photo_bytes(s, db), model_url=mc[0], model_key=mc[1])
+        except model_client.InvalidImageError:
+            skipped.append(s.roll_no)  # stored photo is corrupt/undecodable — skip like any other unusable one
+            continue
         if vec is None:
             skipped.append(s.roll_no)  # photo present but engine found no usable face
             continue
@@ -872,19 +889,26 @@ def save_recognition_settings(
 
 
 def _school_today_range(db: Session):
-    """(today_start, today_end) as UTC datetimes representing "today" in THIS school's
-    configured local time (RecognitionSettings.timezone_offset_minutes, default 0/UTC).
-    Used anywhere "today" needs to mean the school's own calendar day, not necessarily
-    the UTC one — e.g. a school in IST (UTC+5:30) taking attendance at 11pm local time
-    is still on the same UTC day, but one taking attendance at 11pm UTC (4:30am IST) is
-    already on the NEXT local day."""
+    """(today_start, today_end, local_today_start) for THIS school's configured local
+    time (RecognitionSettings.timezone_offset_minutes, default 0/UTC).
+
+    today_start/today_end are UTC instants — use these against fields that store a real
+    timestamp (e.g. AttendanceRecord.date, set from the server clock at creation time).
+
+    local_today_start is the school's local calendar date expressed as a naive midnight
+    with NO offset applied — use this against fields that store a literal date the user
+    picked (e.g. LeaveRequest.start_date/end_date, SchoolEvent.event_date, all parsed via
+    `datetime.fromisoformat("YYYY-MM-DD")` with no timezone conversion). Comparing one of
+    those against the UTC-shifted today_start instead is off by the timezone offset —
+    for a school in IST (UTC+5:30) it happens to still exclude yesterday correctly, but
+    for a school WEST of UTC it wrongly excludes today's own date/event."""
     cfg = db.query(models.RecognitionSettings).first()
     offset = datetime.timedelta(minutes=(cfg.timezone_offset_minutes or 0) if cfg else 0)
     local_now = datetime.datetime.utcnow() + offset
     local_today_start = datetime.datetime.combine(local_now.date(), datetime.time.min)
     today_start = local_today_start - offset
     today_end = today_start + datetime.timedelta(days=1)
-    return today_start, today_end
+    return today_start, today_end, local_today_start
 
 
 # --- School events / announcements (per school) -------------------------------
@@ -961,9 +985,9 @@ def list_upcoming_events(
 ):
     """Upcoming events only (today or later), soonest first, capped at 5 — a dashboard
     preview, not a full history."""
-    today_start, _ = _school_today_range(db)
+    _, _, local_today_start = _school_today_range(db)
     events = db.query(models.SchoolEvent).filter(
-        models.SchoolEvent.event_date >= today_start
+        models.SchoolEvent.event_date >= local_today_start
     ).order_by(models.SchoolEvent.event_date.asc()).limit(5).all()
     return {"events": [
         {
@@ -1343,7 +1367,7 @@ def list_students(
             "name": s.name,
             "roll_no": s.roll_no,
             "section_id": s.section_id,
-            "has_image": s3_photos.has_photo(s),
+            "has_image": s3_photos.has_photo(s, db),
             "has_embedding": s.embedding_vector is not None,
             "parent_username": parents.get(s.id),
             "percentage": st["percentage"],
@@ -1631,7 +1655,10 @@ async def parent_upload_photo_burst(
         # (brighter/darker/contrast) of the same real frame — one parent capture ends up
         # giving the matcher reference points across more lighting conditions, with no
         # extra effort from the parent. See engines.generate_lighting_variants().
-        variants = model_client.embed_largest_variants(contents, model_url=mc[0], model_key=mc[1])
+        try:
+            variants = model_client.embed_largest_variants(contents, model_url=mc[0], model_key=mc[1])
+        except model_client.InvalidImageError:
+            continue  # magic bytes looked valid but the frame is actually corrupt — skip it too
         if not variants:
             continue  # skip frames with no detectable face (blink, motion blur, etc.)
 
@@ -1837,12 +1864,15 @@ def parent_attendance(
     ).order_by(models.AttendanceRecord.date.desc()).all()
 
     now = datetime.datetime.utcnow()
-    today = now.date()
+    today_start, today_end, _ = _school_today_range(db)
 
-    # --- Today's classes: one entry per subject recorded today ---
+    # --- Today's classes: one entry per subject recorded today, using the school's own
+    # local calendar day (same boundary submit_attendance uses) rather than the raw UTC
+    # date — otherwise a class taken between the school's local midnight and the
+    # following UTC midnight can vanish from "today" once UTC has already rolled over. ---
     today_classes = [
         {"subject": r.subject, "status": r.status}
-        for r in all_records if r.date.date() == today
+        for r in all_records if today_start <= r.date < today_end
     ]
 
     # --- Subject-wise stats for this month and this year (leave counted separately) ---
@@ -2112,16 +2142,18 @@ def submit_attendance(
     absent = []
     on_leave = []
     pending_leave = []
-    today_dt = datetime.datetime.utcnow()
-    today_start, today_end = _school_today_range(db)
+    today_start, today_end, local_today_start = _school_today_range(db)
 
     all_student_ids = [s.id for s in all_students]
 
     # Existing records for THIS subject today, so a re-submit updates instead of duplicating.
+    # Subject is matched case-insensitively — it's arbitrary free-form input (not
+    # validated against the canonical Subject list), so "Math" and "math" on the same
+    # day must resolve to the same record instead of creating a duplicate.
     existing = {
         r.student_id: r for r in db.query(models.AttendanceRecord).filter(
             models.AttendanceRecord.student_id.in_(all_student_ids),
-            models.AttendanceRecord.subject == req.subject,
+            func.lower(models.AttendanceRecord.subject) == (req.subject or "").strip().lower(),
             models.AttendanceRecord.date >= today_start,
             models.AttendanceRecord.date < today_end,
         ).all()
@@ -2129,8 +2161,9 @@ def submit_attendance(
 
     # Which students have a leave request covering today whose approval for THIS
     # SUBJECT is approved or still pending — ONE query for the whole section instead of
-    # one lookup per absent student.
-    leave_status = bulk_leave_status_for_subject(all_student_ids, req.subject, db, today_dt)
+    # one lookup per absent student. local_today_start (not today_start) because
+    # LeaveRequest.start_date/end_date store a literal date, not a UTC timestamp.
+    leave_status = bulk_leave_status_for_subject(all_student_ids, req.subject, db, local_today_start)
 
     for s in all_students:
         if s.id in req.present_student_ids:
@@ -2161,7 +2194,7 @@ def submit_attendance(
     # In-app notifications to the parent side for absent students (no email/Firebase needed).
     # Not sent for "pending" — that's not a confirmed absence yet, just an undecided leave.
     if absent:
-        date_str = today_dt.strftime("%d %b %Y")
+        date_str = local_today_start.strftime("%d %b %Y")
         notes = [
             models.Notification(
                 student_id=a["student_id"],
@@ -2177,7 +2210,7 @@ def submit_attendance(
         # LOW_ATTENDANCE_ALERT_COOLDOWN_DAYS per student, using the alert's own text
         # prefix as the marker (no schema change needed for this).
         students_by_id = {s.id: s for s in all_students}
-        cooldown_start = today_dt - datetime.timedelta(days=LOW_ATTENDANCE_ALERT_COOLDOWN_DAYS)
+        cooldown_start = today_start - datetime.timedelta(days=LOW_ATTENDANCE_ALERT_COOLDOWN_DAYS)
         for a in absent:
             student = students_by_id[a["student_id"]]
             pct, present, total, _ = attendance_percentage(student, db)
@@ -2625,7 +2658,7 @@ def get_parent_leaves(
 ):
     student = resolve_parent_student(current_user, student_id, db)
     if not student:
-        return []
+        raise HTTPException(status_code=400, detail="No student linked to this parent")
     leaves = db.query(models.LeaveRequest).filter(models.LeaveRequest.student_id == student.id).order_by(models.LeaveRequest.start_date.desc()).all()
     return [
         {

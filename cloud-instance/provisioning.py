@@ -143,8 +143,15 @@ def _upload_bundle(sftp, local_dir, remote_dir):
     creating remote subdirectories as needed."""
     try:
         sftp.mkdir(remote_dir)
-    except IOError:
-        pass  # already exists
+    except IOError as exc:
+        # SFTP's mkdir raises a generic IOError with no errno distinction between
+        # "already exists" and a real permission/quota failure — stat first so a
+        # genuine failure surfaces here instead of being masked until the first `put`
+        # into this directory fails with a much less clear error.
+        try:
+            sftp.stat(remote_dir)
+        except IOError:
+            raise exc
     for entry in os.listdir(local_dir):
         local_path = os.path.join(local_dir, entry)
         remote_path = f"{remote_dir}/{entry}"
@@ -184,6 +191,7 @@ def provision_school(school_id: int):
     # included) embedded in its own message, which would otherwise defeat the point of
     # keeping these encrypted at rest the moment a superadmin views the failed request.
     secrets_to_redact = []
+    tenant_engine = None
     try:
         school = db.query(models.School).filter(models.School.id == school_id).first()
         if not school:
@@ -238,11 +246,24 @@ def provision_school(school_id: int):
         tsession = TenantSession()
         try:
             admin_password = auth.generate_compliant_password()
-            tsession.add(models.User(
-                username=admin_username,
-                hashed_password=auth.get_password_hash(admin_password),
-                role="admin",
-            ))
+            # A previous attempt for this school can have committed this tenant-DB user
+            # and then failed later in the pipeline (or on the control-plane commit
+            # below) before status was ever set to "active" — retrying would otherwise
+            # re-INSERT the same username and hit the UNIQUE constraint, permanently
+            # stranding the school in a failed-retry loop. Reuse/reset instead of
+            # re-creating so a retry is always safe to run again.
+            existing_admin = tsession.query(models.User).filter(
+                models.User.username == admin_username
+            ).first()
+            if existing_admin:
+                existing_admin.hashed_password = auth.get_password_hash(admin_password)
+                existing_admin.token_version = (existing_admin.token_version or 0) + 1
+            else:
+                tsession.add(models.User(
+                    username=admin_username,
+                    hashed_password=auth.get_password_hash(admin_password),
+                    role="admin",
+                ))
             tsession.commit()
         finally:
             tsession.close()
@@ -268,6 +289,8 @@ def provision_school(school_id: int):
             school.provisioning_error = tb[-2000:]
             db.commit()
     finally:
+        if tenant_engine is not None:
+            tenant_engine.dispose()
         db.close()
 
 

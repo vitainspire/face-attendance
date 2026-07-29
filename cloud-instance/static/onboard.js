@@ -13,6 +13,19 @@ function showView(id) {
 
 let pollTimer = null;
 
+// See app.js's identical helper — a backend error's `detail` is USUALLY a plain
+// string, but FastAPI's own request validation errors return it as an ARRAY of
+// {loc, msg, type} objects instead, which renders as "[object Object]" if passed
+// straight into innerText. This normalizes either shape.
+function errorMessage(err, fallback) {
+    const detail = err && err.detail;
+    if (typeof detail === 'string' && detail) return detail;
+    if (Array.isArray(detail) && detail.length) {
+        return detail.map(d => (d && d.msg) ? d.msg : JSON.stringify(d)).join('; ');
+    }
+    return fallback;
+}
+
 async function fetchStatus() {
     if (!TOKEN) {
         showView('ob-failed-view');
@@ -24,7 +37,7 @@ async function fetchStatus() {
         const data = await res.json();
         if (!res.ok) {
             showView('ob-failed-view');
-            document.getElementById('ob-failed-message').innerText = data.detail || 'Invalid onboarding link.';
+            document.getElementById('ob-failed-message').innerText = errorMessage(data, 'Invalid onboarding link.');
             return;
         }
         render(data);
@@ -99,7 +112,7 @@ document.getElementById('ob-form').addEventListener('submit', async (e) => {
         if (!res.ok) throw data;
         fetchStatus();
     } catch (err) {
-        errBox.innerText = (err && err.detail) ? err.detail : 'Submission failed.';
+        errBox.innerText = errorMessage(err, 'Submission failed.');
         show('ob-form-error');
     }
 });

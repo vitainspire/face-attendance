@@ -97,5 +97,12 @@ def get_photo_bytes(student, db: Optional[Session] = None) -> Optional[bytes]:
     return student.image_data
 
 
-def has_photo(student) -> bool:
-    return bool(student.photo_s3_key or student.image_data)
+def has_photo(student, db: Optional[Session] = None) -> bool:
+    """Mirrors get_photo_bytes' actual ability to RETURN those bytes — a photo_s3_key
+    with no active S3 config (e.g. the school's bucket credentials were since removed)
+    is not actually retrievable, so it must not be reported as "has a photo" here
+    either; otherwise a real, existing photo becomes silently invisible downstream with
+    no error (has_photo says yes, get_photo_bytes then returns None)."""
+    if student.photo_s3_key:
+        return configured(db)
+    return bool(student.image_data)
