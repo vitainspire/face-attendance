@@ -896,6 +896,57 @@ def save_recognition_settings(
     }
 
 
+class SchoolProfileRequest(BaseModel):
+    school_name: str
+    school_place: str
+    academic_year_start_month: int  # 1-12
+
+
+@app.get("/admin/school_profile")
+def get_school_profile(
+    db: Session = Depends(auth.get_tenant_db),
+    _: models.User = Depends(auth.require_role("admin", "teacher")),
+):
+    """Readable by admin and teacher — used as the letterhead on exported attendance
+    reports. Absence of a row (school hasn't filled this in yet) just means reports
+    show no letterhead, not an error."""
+    cfg = db.query(models.SchoolProfile).first()
+    return {
+        "school_name": cfg.school_name if cfg else None,
+        "school_place": cfg.school_place if cfg else None,
+        "academic_year_start_month": cfg.academic_year_start_month if cfg else None,
+        "configured": bool(cfg and cfg.school_name),
+    }
+
+
+@app.post("/admin/school_profile")
+def save_school_profile(
+    req: SchoolProfileRequest,
+    db: Session = Depends(auth.get_tenant_db),
+    _: models.User = Depends(auth.require_role("admin")),
+):
+    if not req.school_name.strip():
+        raise HTTPException(status_code=400, detail="School name is required")
+    if not req.school_place.strip():
+        raise HTTPException(status_code=400, detail="School place is required")
+    if not (1 <= req.academic_year_start_month <= 12):
+        raise HTTPException(status_code=400, detail="Academic year start month must be between 1 and 12")
+    cfg = db.query(models.SchoolProfile).first()
+    if not cfg:
+        cfg = models.SchoolProfile()
+        db.add(cfg)
+    cfg.school_name = req.school_name.strip()
+    cfg.school_place = req.school_place.strip()
+    cfg.academic_year_start_month = req.academic_year_start_month
+    db.commit()
+    return {
+        "message": "Saved",
+        "school_name": cfg.school_name,
+        "school_place": cfg.school_place,
+        "academic_year_start_month": cfg.academic_year_start_month,
+    }
+
+
 def _school_today_range(db: Session):
     """(today_start, today_end, local_today_start) for THIS school's configured local
     time (RecognitionSettings.timezone_offset_minutes, default 0/UTC).
@@ -2491,28 +2542,130 @@ def _check_report_access(db: Session, current_user: models.User, section_id: int
         raise HTTPException(status_code=403, detail="You are not assigned to this section/subject")
 
 
+def _academic_year_range(db: Session):
+    """(start, end, label) for the school's CURRENT ACADEMIC year — e.g. start_month=4
+    (April) means an academic year of Apr-through-Mar, and "today" in Feb 2026 falls in
+    the year that started Apr 2025. end is EXCLUSIVE (first instant of the next academic
+    year), matching _period_range's convention. Falls back to a plain Jan-Dec calendar
+    year if the school hasn't configured a SchoolProfile/start month yet."""
+    cfg = db.query(models.SchoolProfile).first()
+    start_month = cfg.academic_year_start_month if cfg and cfg.academic_year_start_month else 1
+
+    today_start, today_end, local_today_start = _school_today_range(db)
+    offset = local_today_start - today_start
+    today_local_date = local_today_start.date()
+
+    if today_local_date.month >= start_month:
+        year_start_date = datetime.date(today_local_date.year, start_month, 1)
+        end_year = today_local_date.year + 1
+    else:
+        year_start_date = datetime.date(today_local_date.year - 1, start_month, 1)
+        end_year = today_local_date.year
+    year_end_date = datetime.date(end_year, start_month, 1)  # exclusive
+
+    start = datetime.datetime.combine(year_start_date, datetime.time.min) - offset
+    end = datetime.datetime.combine(year_end_date, datetime.time.min) - offset
+    label = str(year_start_date.year) if start_month == 1 else f"{year_start_date.year}-{year_end_date.year}"
+    return start, end, label
+
+
+def _report_date_range(db: Session, period: str):
+    """(start, end, label) for the report period buttons. 'today'/'week'/'month' reuse
+    _period_range's day-boundary math (school-local, exclusive end); 'year' is the
+    school's configured ACADEMIC year, not the calendar year, via _academic_year_range."""
+    if period == "year":
+        return _academic_year_range(db)
+    if period in ("today", "week", "month"):
+        start, end = _period_range(db, period)
+        label = {"today": "Today", "week": "This Week", "month": "This Month"}[period]
+        return start, end, label
+    raise HTTPException(status_code=400, detail="period must be one of: today, week, month, year")
+
+
+def _resolve_report_range(db: Session, period: Optional[str], start_date: Optional[str], end_date: Optional[str]):
+    """(start, end, range_label, filename_range) — end is INCLUSIVE (matches
+    _attendance_report_rows' <= comparison and _parse_report_range's own convention).
+    Accepts either a period button (today/week/month/year) or an explicit
+    start_date/end_date pair, so existing callers (the parent portal) keep working
+    unchanged even though the admin UI now only ever sends period."""
+    if period:
+        start, end_exclusive, label = _report_date_range(db, period)
+        end = end_exclusive - datetime.timedelta(seconds=1)
+        filename_range = f"{start.strftime('%Y-%m-%d')}_to_{end.strftime('%Y-%m-%d')}"
+        return start, end, label, filename_range
+    if start_date and end_date:
+        start, end = _parse_report_range(start_date, end_date)
+        return start, end, f"{start_date} to {end_date}", f"{start_date}_to_{end_date}"
+    raise HTTPException(status_code=400, detail="Provide either a period (today/week/month/year) or start_date and end_date")
+
+
+def _report_letterhead_lines(db: Session):
+    """(school_name, school_place) or (None, None) if the school hasn't filled in its
+    profile yet — used to prefix both the CSV and PDF report exports."""
+    cfg = db.query(models.SchoolProfile).first()
+    if not cfg or not cfg.school_name:
+        return None, None
+    return cfg.school_name, cfg.school_place
+
+
+@app.get("/reports/attendance/preview")
+def attendance_report_preview(
+    section_id: int,
+    period: str,
+    subject: str = "All",
+    db: Session = Depends(auth.get_tenant_db),
+    current_user: models.User = Depends(auth.require_role("admin", "teacher")),
+):
+    """JSON version of the report — shows the data on-screen before the admin/teacher
+    commits to a CSV/PDF download."""
+    _check_report_access(db, current_user, section_id, subject)
+    start, end, label, _ = _resolve_report_range(db, period, None, None)
+    rows = _attendance_report_rows(db, section_id, start, end, subject)
+    school_name, school_place = _report_letterhead_lines(db)
+    counts = {"present": 0, "absent": 0, "leave": 0}
+    for r in rows:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+    return {
+        "rows": rows,
+        "period_label": label,
+        "start_date": start.strftime("%Y-%m-%d"),
+        "end_date": end.strftime("%Y-%m-%d"),
+        "school_name": school_name,
+        "school_place": school_place,
+        "counts": counts,
+    }
+
+
 @app.get("/reports/attendance.csv")
 def attendance_report_csv(
     section_id: int,
-    start_date: str,
-    end_date: str,
+    period: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     subject: str = "All",
     db: Session = Depends(auth.get_tenant_db),
     current_user: models.User = Depends(auth.require_role("admin", "teacher")),
 ):
     _check_report_access(db, current_user, section_id, subject)
-    start, end = _parse_report_range(start_date, end_date)
+    start, end, range_label, filename_range = _resolve_report_range(db, period, start_date, end_date)
     rows = _attendance_report_rows(db, section_id, start, end, subject)
+    school_name, school_place = _report_letterhead_lines(db)
 
     output = io.StringIO()
     writer = csv.writer(output)
+    if school_name:
+        writer.writerow([_csv_safe(school_name)])
+        if school_place:
+            writer.writerow([_csv_safe(school_place)])
+    writer.writerow([f"Report period: {range_label}"])
+    writer.writerow([])
     writer.writerow(["Date", "Roll No", "Name", "Subject", "Status"])
     for r in rows:
         writer.writerow([r["date"], _csv_safe(r["roll_no"]), _csv_safe(r["name"]), _csv_safe(r["subject"]), r["status"]])
     output.seek(0)
     response = StreamingResponse(iter([output.getvalue()]), media_type="text/csv")
     response.headers["Content-Disposition"] = (
-        f"attachment; filename=attendance_{section_id}_{start_date}_to_{end_date}.csv")
+        f"attachment; filename=attendance_{section_id}_{filename_range}.csv")
     return response
 
 
@@ -2526,7 +2679,7 @@ def _pdf_safe(text: str) -> str:
     return text.encode("latin-1", errors="replace").decode("latin-1")
 
 
-def _build_attendance_pdf_bytes(rows, subtitle_line):
+def _build_attendance_pdf_bytes(rows, subtitle_line, school_name=None, school_place=None):
     from fpdf import FPDF
     counts = {"present": 0, "absent": 0, "leave": 0}
     for r in rows:
@@ -2534,6 +2687,13 @@ def _build_attendance_pdf_bytes(rows, subtitle_line):
 
     pdf = FPDF()
     pdf.add_page()
+    if school_name:
+        pdf.set_font("Helvetica", "B", 16)
+        pdf.cell(0, 9, _pdf_safe(school_name), new_x="LMARGIN", new_y="NEXT", align="C")
+        if school_place:
+            pdf.set_font("Helvetica", "", 10)
+            pdf.cell(0, 6, _pdf_safe(school_place), new_x="LMARGIN", new_y="NEXT", align="C")
+        pdf.ln(3)
     pdf.set_font("Helvetica", "B", 14)
     pdf.cell(0, 10, "Attendance Report", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "", 10)
@@ -2564,20 +2724,23 @@ def _build_attendance_pdf_bytes(rows, subtitle_line):
 @app.get("/reports/attendance.pdf")
 def attendance_report_pdf(
     section_id: int,
-    start_date: str,
-    end_date: str,
+    period: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     subject: str = "All",
     db: Session = Depends(auth.get_tenant_db),
     current_user: models.User = Depends(auth.require_role("admin", "teacher")),
 ):
     _check_report_access(db, current_user, section_id, subject)
-    start, end = _parse_report_range(start_date, end_date)
+    start, end, range_label, filename_range = _resolve_report_range(db, period, start_date, end_date)
     rows = _attendance_report_rows(db, section_id, start, end, subject)
+    school_name, school_place = _report_letterhead_lines(db)
     pdf_bytes = _build_attendance_pdf_bytes(
-        rows, f"Section {section_id}  |  {start_date} to {end_date}  |  Subject: {subject}")
+        rows, f"Section {section_id}  |  {range_label}  |  Subject: {subject}",
+        school_name=school_name, school_place=school_place)
     response = StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf")
     response.headers["Content-Disposition"] = (
-        f"attachment; filename=attendance_{section_id}_{start_date}_to_{end_date}.pdf")
+        f"attachment; filename=attendance_{section_id}_{filename_range}.pdf")
     return response
 
 
@@ -2595,9 +2758,15 @@ def parent_attendance_report_csv(
         raise HTTPException(status_code=400, detail="No student linked to this parent")
     start, end = _parse_report_range(start_date, end_date)
     rows = _attendance_report_rows(db, student.section_id, start, end, subject, student_id=student.id)
+    school_name, school_place = _report_letterhead_lines(db)
 
     output = io.StringIO()
     writer = csv.writer(output)
+    if school_name:
+        writer.writerow([_csv_safe(school_name)])
+        if school_place:
+            writer.writerow([_csv_safe(school_place)])
+        writer.writerow([])
     writer.writerow(["Date", "Subject", "Status"])
     for r in rows:
         writer.writerow([r["date"], _csv_safe(r["subject"]), r["status"]])
@@ -2622,8 +2791,10 @@ def parent_attendance_report_pdf(
         raise HTTPException(status_code=400, detail="No student linked to this parent")
     start, end = _parse_report_range(start_date, end_date)
     rows = _attendance_report_rows(db, student.section_id, start, end, subject, student_id=student.id)
+    school_name, school_place = _report_letterhead_lines(db)
     pdf_bytes = _build_attendance_pdf_bytes(
-        rows, f"{student.name} (Roll {student.roll_no})  |  {start_date} to {end_date}  |  Subject: {subject}")
+        rows, f"{student.name} (Roll {student.roll_no})  |  {start_date} to {end_date}  |  Subject: {subject}",
+        school_name=school_name, school_place=school_place)
     response = StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf")
     response.headers["Content-Disposition"] = (
         f"attachment; filename=attendance_{student.roll_no}_{start_date}_to_{end_date}.pdf")

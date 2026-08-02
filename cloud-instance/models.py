@@ -322,6 +322,22 @@ class RecognitionSettings(Base):
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 
+class SchoolProfile(Base):
+    """Lives in the SCHOOL's own tenant database (one row per school) — basic identity
+    details used as a letterhead on exported attendance reports. Absence of a row (or
+    of school_name) means this school hasn't filled it in yet; reports then simply
+    omit the letterhead lines, unchanged from before this feature existed."""
+    __tablename__ = "school_profile"
+    id = Column(Integer, primary_key=True, index=True)
+    school_name = Column(String, nullable=True)
+    school_place = Column(String, nullable=True)
+    # Which calendar month the academic year begins (1-12, e.g. 4 for April) — lets
+    # "this academic year" be computed on the fly (e.g. Apr 2025-Mar 2026) without the
+    # admin ever having to update explicit start/end dates every year.
+    academic_year_start_month = Column(Integer, nullable=True)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
 class SchoolEvent(Base):
     """Admin-managed announcement/event, shown on the parent dashboard's 'Upcoming
     Event' card — replaces what used to be a static placeholder there. Lives in the

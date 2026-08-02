@@ -359,7 +359,8 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
 function adminTab(which) {
     const tabs = { register: 'admin-register', students: 'admin-students', embeddings: 'admin-embeddings',
                    teachers: 'admin-teachers', reports: 'admin-reports', classes: 'admin-classes',
-                   storage: 'admin-storage', recognition: 'admin-recognition', events: 'admin-events' };
+                   storage: 'admin-storage', recognition: 'admin-recognition',
+                   'school-profile': 'admin-school-profile', events: 'admin-events' };
     Object.keys(tabs).forEach(k => {
         document.getElementById('tab-' + k).classList.toggle('active', which === k);
         document.getElementById(tabs[k]).classList.toggle('hidden', which !== k);
@@ -371,6 +372,7 @@ function adminTab(which) {
     if (which === 'classes') loadClassesTab();
     if (which === 'storage') loadS3Settings();
     if (which === 'recognition') loadRecognitionSettings();
+    if (which === 'school-profile') loadSchoolProfile();
     if (which === 'events') loadEvents();
 }
 document.getElementById('tab-register').addEventListener('click', () => adminTab('register'));
@@ -381,6 +383,7 @@ document.getElementById('tab-reports').addEventListener('click', () => adminTab(
 document.getElementById('tab-classes').addEventListener('click', () => adminTab('classes'));
 document.getElementById('tab-storage').addEventListener('click', () => adminTab('storage'));
 document.getElementById('tab-recognition').addEventListener('click', () => adminTab('recognition'));
+document.getElementById('tab-school-profile').addEventListener('click', () => adminTab('school-profile'));
 document.getElementById('tab-events').addEventListener('click', () => adminTab('events'));
 
 // ===================== Admin: events / announcements =====================
@@ -2234,21 +2237,73 @@ document.getElementById('report_class').addEventListener('change', async (e) => 
     }
 });
 
+// 'today' | 'week' | 'month' | 'year' (academic year) — which button was last clicked.
+// null until the admin picks one; the preview/download actions all require this to be set.
+let reportPeriod = null;
+const REPORT_PERIOD_LABELS = { today: 'Today', week: 'Weekly', month: 'Monthly', year: 'Yearly' };
+
 function reportQueryString() {
     const sectionId = document.getElementById('report_section').value;
     const subject = document.getElementById('report_subject').value || 'All';
-    const startDate = document.getElementById('report_start_date').value;
-    const endDate = document.getElementById('report_end_date').value;
-    if (!sectionId || !startDate || !endDate) {
-        throw new Error('Select a section and both start/end dates first.');
-    }
-    return `section_id=${sectionId}&start_date=${startDate}&end_date=${endDate}&subject=${encodeURIComponent(subject)}`;
+    if (!sectionId) throw new Error('Select a class and section first.');
+    if (!reportPeriod) throw new Error('Pick a time range (Today / Weekly / Monthly / Yearly) first.');
+    return `section_id=${sectionId}&period=${reportPeriod}&subject=${encodeURIComponent(subject)}`;
 }
+
+async function loadReportPreview() {
+    hide('report-error');
+    hide('report-preview');
+    try {
+        const qs = reportQueryString();
+        const data = await api(`/reports/attendance/preview?${qs}`);
+        const titleParts = [];
+        if (data.school_name) titleParts.push(data.school_name);
+        document.getElementById('report-preview-title').innerText =
+            titleParts.length ? titleParts.join(' — ') : 'Attendance Report';
+        document.getElementById('report-preview-meta').innerText =
+            `${data.period_label} (${data.start_date} to ${data.end_date}) — ` +
+            `${data.rows.length} record${data.rows.length === 1 ? '' : 's'} — ` +
+            `Present: ${data.counts.present}, Absent: ${data.counts.absent}, Leave: ${data.counts.leave}`;
+        const tbody = document.getElementById('report-preview-rows');
+        tbody.innerHTML = '';
+        if (!data.rows.length) {
+            tbody.innerHTML = '<tr><td colspan="5"><span class="hint">No attendance records in this range.</span></td></tr>';
+        } else {
+            data.rows.forEach(r => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.roll_no)}</td>`
+                    + `<td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.subject)}</td><td>${escapeHtml(r.status)}</td>`;
+                tbody.appendChild(tr);
+            });
+        }
+        show('report-preview');
+    } catch (err) {
+        const box = document.getElementById('report-error');
+        box.innerText = err.message || errorMessage(err, 'Failed to load report');
+        show('report-error');
+    }
+}
+
+document.querySelectorAll('.report-period-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        reportPeriod = btn.dataset.period;
+        document.querySelectorAll('.report-period-btn').forEach(b => {
+            const active = b.dataset.period === reportPeriod;
+            b.classList.toggle('primary-btn', active);
+            b.classList.toggle('secondary-btn', !active);
+        });
+        loadReportPreview();
+    });
+});
+// Re-run the currently selected period whenever the section/subject changes underneath it.
+document.getElementById('report_section').addEventListener('change', () => { if (reportPeriod) loadReportPreview(); });
+document.getElementById('report_subject').addEventListener('change', () => { if (reportPeriod) loadReportPreview(); });
+
 document.getElementById('btn-report-csv').addEventListener('click', async () => {
     hide('report-error');
     try {
         const qs = reportQueryString();
-        await downloadAuthed(`/reports/attendance.csv?${qs}`, 'attendance_report.csv', 'report-error');
+        await downloadAuthed(`/reports/attendance.csv?${qs}`, `attendance_report_${REPORT_PERIOD_LABELS[reportPeriod]}.csv`, 'report-error');
     } catch (err) {
         const box = document.getElementById('report-error');
         box.innerText = err.message;
@@ -2259,7 +2314,7 @@ document.getElementById('btn-report-pdf').addEventListener('click', async () => 
     hide('report-error');
     try {
         const qs = reportQueryString();
-        await downloadAuthed(`/reports/attendance.pdf?${qs}`, 'attendance_report.pdf', 'report-error');
+        await downloadAuthed(`/reports/attendance.pdf?${qs}`, `attendance_report_${REPORT_PERIOD_LABELS[reportPeriod]}.pdf`, 'report-error');
     } catch (err) {
         const box = document.getElementById('report-error');
         box.innerText = err.message;
@@ -2660,6 +2715,38 @@ document.getElementById('btn-save-recognition').addEventListener('click', async 
     } catch (err) {
         document.getElementById('recognition-settings-error').innerText = errorMessage(err, 'Failed to save');
         show('recognition-settings-error');
+    }
+});
+
+// ===================== Admin: School Profile (report letterhead) =====================
+async function loadSchoolProfile() {
+    try {
+        const data = await api('/admin/school_profile');
+        document.getElementById('sp_school_name').value = data.school_name || '';
+        document.getElementById('sp_school_place').value = data.school_place || '';
+        document.getElementById('sp_academic_year_start_month').value = data.academic_year_start_month || 4;
+    } catch (err) {
+        document.getElementById('school-profile-error').innerText = errorMessage(err, 'Failed to load school profile');
+        show('school-profile-error');
+    }
+}
+
+document.getElementById('btn-save-school-profile').addEventListener('click', async () => {
+    hide('school-profile-error'); hide('school-profile-success');
+    try {
+        await api('/admin/school_profile', {
+            method: 'POST',
+            json: {
+                school_name: document.getElementById('sp_school_name').value,
+                school_place: document.getElementById('sp_school_place').value,
+                academic_year_start_month: parseInt(document.getElementById('sp_academic_year_start_month').value),
+            },
+        });
+        document.getElementById('school-profile-success').innerText = 'Saved! This now appears on every attendance report.';
+        show('school-profile-success');
+    } catch (err) {
+        document.getElementById('school-profile-error').innerText = errorMessage(err, 'Failed to save');
+        show('school-profile-error');
     }
 });
 
