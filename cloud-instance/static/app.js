@@ -74,12 +74,12 @@ function showView(id) {
 // cascading class-then-section pattern used in Manage Students/Embeddings/Reports/Classes).
 // Always fetched fresh from /admin/classes so newly-added classes/sections show up
 // immediately, instead of the old hardcoded <option> lists that never updated.
-async function populateFlatSectionDropdown(selectId) {
+async function populateFlatSectionDropdown(selectId, endpoint = '/admin/classes') {
     const sel = document.getElementById(selectId);
     if (!sel) return;
     const prev = sel.value;
     try {
-        const data = await api('/admin/classes');
+        const data = await api(endpoint);
         sel.innerHTML = '';
         data.classes.forEach(c => {
             c.sections.forEach(s => {
@@ -103,7 +103,11 @@ async function populateAdminFlatDropdowns() {
 }
 
 async function populateTeacherFlatDropdowns() {
-    await Promise.all(['att_section_id', 'analytics_section', 'leave_section'].map(populateFlatSectionDropdown));
+    // Scoped to this teacher's own assigned sections — /teacher/my_classes, not
+    // /admin/classes, so a teacher never sees a section they aren't assigned to.
+    await Promise.all(['att_section_id', 'analytics_section', 'leave_section'].map(
+        id => populateFlatSectionDropdown(id, '/teacher/my_classes')
+    ));
     loadSubjectsForSection('att_section_id', 'attendance_subject', false);
     loadSubjectsForSection('analytics_section', 'analytics_subject', true);
 }
@@ -212,6 +216,7 @@ function logout() {
     closeDrawer('teacher-notif-overlay', 'teacher-notifications-panel');
     showView('login-view');
     stopCamera();
+    stopGpCamera();
     stopIdleTimer();
 }
 document.getElementById('btn-logout').addEventListener('click', logout);
@@ -1533,6 +1538,7 @@ function teacherTab(which) {
     document.getElementById('teacher-attendance').classList.toggle('hidden', which !== 'attendance');
     document.getElementById('teacher-analytics').classList.toggle('hidden', which !== 'analytics');
     document.getElementById('teacher-leaves').classList.toggle('hidden', which !== 'leaves');
+    if (which !== 'attendance') stopGpCamera();  // release the camera when leaving this tab
 }
 document.getElementById('tab-attendance').addEventListener('click', () => teacherTab('attendance'));
 document.getElementById('tab-analytics').addEventListener('click', () => {
@@ -1545,9 +1551,9 @@ document.getElementById('btn-export-csv').addEventListener('click', async () => 
     const subj = document.getElementById('analytics_subject').value;
     try {
         const token = localStorage.getItem('token');
-        let url = `/teacher/analytics/export?section_id=${sec}`;
+        let url = `/teacher/analytics/export?section_id=${sec}&period=${analyticsPeriod}`;
         if (subj !== 'All') url += `&subject=${encodeURIComponent(subj)}`;
-        
+
         const res = await fetch(API_BASE + url, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
@@ -1648,19 +1654,42 @@ async function refreshPendingLeaveBadge() {
     }
 }
 
-// ===================== Teacher: drag-and-drop photo dropzone =====================
+// ===================== Teacher: classroom photo — upload OR camera, with preview =====================
+// Whichever source the teacher used (file picker, drag-drop, or camera capture) ends
+// up here as one Blob/File — the submit handler reads this instead of the raw file
+// input, since a camera capture never populates group_photo.files itself.
+let selectedGroupPhotoBlob = null;
+let gpCameraStream = null;
+
+function showGroupPhotoPreview(blobOrFile) {
+    const img = document.getElementById('gp-preview');
+    const wrap = document.getElementById('gp-preview-wrap');
+    if (!img || !wrap) return;
+    img.src = URL.createObjectURL(blobOrFile);
+    wrap.classList.remove('hidden');
+}
+
+function clearGroupPhotoSelection() {
+    selectedGroupPhotoBlob = null;
+    hide('gp-preview-wrap');
+    const fileInput = document.getElementById('group_photo');
+    if (fileInput) fileInput.value = '';
+}
+
 (function () {
     const dropzone = document.getElementById('dropzone');
     const fileInput = document.getElementById('group_photo');
     const text = document.getElementById('dropzone-text');
     if (!dropzone || !fileInput) return;
 
-    function showFileName() {
+    function useFile() {
         if (fileInput.files && fileInput.files.length) {
             text.textContent = fileInput.files[0].name;
+            selectedGroupPhotoBlob = fileInput.files[0];
+            showGroupPhotoPreview(selectedGroupPhotoBlob);
         }
     }
-    fileInput.addEventListener('change', showFileName);
+    fileInput.addEventListener('change', useFile);
 
     ['dragover', 'dragenter'].forEach(evt => {
         dropzone.addEventListener(evt, (e) => {
@@ -1676,10 +1705,73 @@ async function refreshPendingLeaveBadge() {
         dropzone.classList.remove('dragover');
         if (e.dataTransfer.files && e.dataTransfer.files.length) {
             fileInput.files = e.dataTransfer.files;
-            showFileName();
+            useFile();
         }
     });
 })();
+
+// ---- Upload / Camera source tabs ----
+function stopGpCamera() {
+    if (gpCameraStream) { gpCameraStream.getTracks().forEach(t => t.stop()); gpCameraStream = null; }
+}
+
+function showGpUploadTab() {
+    stopGpCamera();
+    document.getElementById('gp-tab-upload').classList.replace('secondary-btn', 'primary-btn');
+    document.getElementById('gp-tab-camera').classList.replace('primary-btn', 'secondary-btn');
+    show('gp-upload-pane');
+    hide('gp-camera-pane');
+}
+
+function showGpCameraTab() {
+    document.getElementById('gp-tab-camera').classList.replace('secondary-btn', 'primary-btn');
+    document.getElementById('gp-tab-upload').classList.replace('primary-btn', 'secondary-btn');
+    hide('gp-upload-pane');
+    show('gp-camera-pane');
+    // Reset the camera pane back to its "not started yet" state every time it's opened.
+    show('gp-camera-live');
+    hide('btn-gp-capture');
+    show('btn-gp-start-cam');
+    hide('btn-gp-retake');
+}
+
+document.getElementById('gp-tab-upload').addEventListener('click', showGpUploadTab);
+document.getElementById('gp-tab-camera').addEventListener('click', showGpCameraTab);
+
+async function startGpCamera() {
+    try {
+        gpCameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        document.getElementById('gp-camera').srcObject = gpCameraStream;
+        hide('btn-gp-start-cam');
+        show('btn-gp-capture');
+    } catch (err) {
+        alert('Could not access camera: ' + err.message);
+    }
+}
+document.getElementById('btn-gp-start-cam').addEventListener('click', startGpCamera);
+
+document.getElementById('btn-gp-capture').addEventListener('click', async () => {
+    const video = document.getElementById('gp-camera');
+    const canvas = document.getElementById('gp-capture-canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+    selectedGroupPhotoBlob = blob;
+    showGroupPhotoPreview(blob);
+    stopGpCamera();
+    hide('gp-camera-live');
+    show('btn-gp-retake');
+});
+
+// Lets the teacher discard a bad shot (blurry, wrong angle, someone missing from frame)
+// and try again without leaving the camera tab or losing the section/subject already picked.
+document.getElementById('btn-gp-retake').addEventListener('click', () => {
+    clearGroupPhotoSelection();
+    hide('btn-gp-retake');
+    show('gp-camera-live');
+    startGpCamera();
+});
 
 // Teacher: recognize + manual-correction checklist
 // The checklist always lists the WHOLE section roster as checkboxes (pre-checked from
@@ -1787,6 +1879,10 @@ async function submitAndPollRecognize(form) {
 
 document.getElementById('attendance-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (!selectedGroupPhotoBlob) {
+        alert('Please select or capture a classroom photo first.');
+        return;
+    }
     const submitBtn = e.target.querySelector('button[type="submit"]');
     if (submitBtn) submitBtn.disabled = true;
     show('loading'); hide('attendance-result'); hide('absent-box');
@@ -1795,7 +1891,7 @@ document.getElementById('attendance-form').addEventListener('submit', async (e) 
     const form = new FormData();
     form.append('section_id', currentSection);
     form.append('subject', subj);
-    form.append('file', document.getElementById('group_photo').files[0]);
+    form.append('file', selectedGroupPhotoBlob, 'photo.jpg');
 
     try {
         const [data, rosterData, recognitionSettings] = await Promise.all([
@@ -1896,6 +1992,9 @@ document.getElementById('btn-submit-final').addEventListener('click', async () =
 
         // Reset the form to a fresh state as requested by the user
         document.getElementById('attendance-form').reset();
+        clearGroupPhotoSelection();
+        document.getElementById('dropzone-text').textContent = 'Drag and drop your classroom photo here, or click to select.';
+        showGpUploadTab();
         hide('attendance-result');
         hide('absent-box');
     } catch (err) {
@@ -1985,11 +2084,28 @@ function renderTeacherCalendar(dailyStats) {
     });
 }
 
+// 'all' | 'today' | 'week' | 'month' — which slice of attendance history the stats
+// tables show. The calendar pane always shows full history regardless (see backend).
+let analyticsPeriod = 'all';
+
+function setAnalyticsPeriod(period) {
+    analyticsPeriod = period;
+    document.querySelectorAll('.period-btn').forEach(b => {
+        const active = b.dataset.period === period;
+        b.classList.toggle('primary-btn', active);
+        b.classList.toggle('secondary-btn', !active);
+    });
+    fetchAnalytics();
+}
+document.querySelectorAll('.period-btn').forEach(btn => {
+    btn.addEventListener('click', () => setAnalyticsPeriod(btn.dataset.period));
+});
+
 async function fetchAnalytics() {
     const sec = parseInt(document.getElementById('analytics_section').value);
     const subj = document.getElementById('analytics_subject').value;
     try {
-        let url = `/teacher/analytics?section_id=${sec}`;
+        let url = `/teacher/analytics?section_id=${sec}&period=${analyticsPeriod}`;
         if (subj !== 'All') url += `&subject=${encodeURIComponent(subj)}`;
         const data = await api(url);
         

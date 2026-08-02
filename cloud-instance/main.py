@@ -280,12 +280,16 @@ def attendance_percentage(student: models.Student, db: Session):
     return pct, present, total, unique_days
 
 
-def bulk_attendance_stats(student_ids, db: Session, subject: str = "All"):
+def bulk_attendance_stats(student_ids, db: Session, subject: str = "All", start=None, end=None):
     """Same stats as attendance_percentage, for MANY students in a single query.
 
     Returns {student_id: {"percentage", "present", "total", "unique_days", "records"}}.
     Avoids the N+1 pattern of calling attendance_percentage per student (each call is a
     separate DB round trip — expensive when the DB is reached over a network tunnel).
+
+    start/end (optional) bound the query to [start, end) — used for the teacher
+    analytics "Today"/"This Week"/"This Month" filters; omitted entirely (both None)
+    for the default all-time view, so every existing caller is unaffected.
     """
     if not student_ids:
         return {}
@@ -294,6 +298,10 @@ def bulk_attendance_stats(student_ids, db: Session, subject: str = "All"):
     )
     if subject != "All":
         query = query.filter(models.AttendanceRecord.subject == subject)
+    if start is not None:
+        query = query.filter(models.AttendanceRecord.date >= start)
+    if end is not None:
+        query = query.filter(models.AttendanceRecord.date < end)
     by_student = {sid: [] for sid in student_ids}
     for r in query.all():
         by_student.setdefault(r.student_id, []).append(r)
@@ -1979,6 +1987,41 @@ def get_teacher_roster(
     return {"students": [{"id": s.id, "name": s.name, "roll_no": s.roll_no} for s in students]}
 
 
+@app.get("/teacher/my_classes")
+def get_teacher_classes(
+    db: Session = Depends(auth.get_tenant_db),
+    current_user: models.User = Depends(auth.require_role("teacher")),
+):
+    """Classes/sections THIS teacher may act on — populates the section dropdowns on
+    the Take Attendance / Analytics / Leave Requests tabs, so a teacher only ever sees
+    their own assigned sections there instead of every section in the school. Same
+    fallback rule as teacher_can_act_on/teacher_can_access_section: if nobody at the
+    school has been assigned anything yet, every section stays open (unchanged legacy
+    behavior) rather than showing an empty list."""
+    my_assignments = db.query(models.TeacherAssignment).filter(
+        models.TeacherAssignment.teacher_id == current_user.id
+    ).all()
+    if my_assignments:
+        allowed_section_ids = {a.section_id for a in my_assignments}
+    elif db.query(models.TeacherAssignment.id).first() is None:
+        allowed_section_ids = None  # nobody assigned anything anywhere -> fully open
+    else:
+        allowed_section_ids = set()  # other teachers are assigned, this one isn't -> none
+
+    classes = db.query(models.ClassGroup).order_by(models.ClassGroup.name).all()
+    result = []
+    for c in classes:
+        secs = sorted(c.sections, key=lambda x: x.name)
+        if allowed_section_ids is not None:
+            secs = [s for s in secs if s.id in allowed_section_ids]
+        if secs:
+            result.append({
+                "id": c.id, "name": c.name,
+                "sections": [{"id": s.id, "name": s.name} for s in secs],
+            })
+    return {"classes": result}
+
+
 @app.get("/teacher/my_subjects")
 def get_teacher_subjects(
     section_id: int,
@@ -2252,13 +2295,31 @@ def submit_attendance(
 def get_teacher_analytics(
     section_id: int,
     subject: str = "All",
+    period: str = "all",
     db: Session = Depends(auth.get_tenant_db),
     _: models.User = Depends(auth.require_role("teacher")),
 ):
-    return teacher_analytics(section_id, db, _, subject)
+    return teacher_analytics(section_id, db, _, subject, period)
 
 
-def teacher_analytics(section_id: int, db: Session, current_user, subject: str = "All"):
+def _period_range(db: Session, period: str):
+    """(start, end) UTC bounds for 'today'/'week'/'month', or (None, None) for 'all' —
+    the teacher analytics period filter. 'week' is a rolling 7-day window ending today;
+    'month' is calendar-month-to-date — both anchored to the school's own local day via
+    _school_today_range, same as submit_attendance's day-boundary logic."""
+    if period not in ("today", "week", "month"):
+        return None, None
+    today_start, today_end, local_today_start = _school_today_range(db)
+    if period == "today":
+        return today_start, today_end
+    if period == "week":
+        return today_start - datetime.timedelta(days=6), today_end
+    offset = local_today_start - today_start
+    month_start = local_today_start.replace(day=1) - offset
+    return month_start, today_end
+
+
+def teacher_analytics(section_id: int, db: Session, current_user, subject: str = "All", period: str = "all"):
     allowed = (teacher_can_access_section(db, current_user.id, section_id) if subject == "All"
                else teacher_can_act_on(db, current_user.id, section_id, subject))
     if not allowed:
@@ -2271,7 +2332,13 @@ def teacher_analytics(section_id: int, db: Session, current_user, subject: str =
 
     # ONE query for every student's records (used for both per-student stats and the
     # daily calendar below) instead of one query per student.
-    bulk = bulk_attendance_stats(student_ids, db, subject=subject)
+    start, end = _period_range(db, period)
+    bulk = bulk_attendance_stats(student_ids, db, subject=subject, start=start, end=end)
+    # The calendar always shows full history regardless of the stats period selected —
+    # it has its own month-by-month navigation, so a "Today"/"This Week" filter on the
+    # stats above shouldn't also hide every other day from the calendar. Only refetch
+    # when the period actually filtered something, to avoid a second query otherwise.
+    calendar_bulk = bulk if (start is None and end is None) else bulk_attendance_stats(student_ids, db, subject=subject)
 
     stats = []
     for s in students:
@@ -2292,10 +2359,10 @@ def teacher_analytics(section_id: int, db: Session, current_user, subject: str =
         })
     stats.sort(key=lambda x: x["percentage"])
 
-    # Daily aggregates for the section calendar, reusing the SAME records already fetched.
+    # Daily aggregates for the section calendar — always full history (see calendar_bulk above).
     from collections import defaultdict
     daily = defaultdict(lambda: {"total": 0, "present": 0})
-    for st in bulk.values():
+    for st in calendar_bulk.values():
         for r in st["records"]:
             if r.status == "leave":
                 continue                      # leave days excluded from daily grading
@@ -2319,7 +2386,8 @@ def teacher_analytics(section_id: int, db: Session, current_user, subject: str =
     return {
         "students": stats,
         "low_attendance": [s for s in stats if s["low_attendance"]],
-        "daily_stats": daily_stats
+        "daily_stats": daily_stats,
+        "period": period,
     }
 
 import io
@@ -2342,10 +2410,11 @@ def _csv_safe(value):
 def export_analytics(
     section_id: int,
     subject: str = "All",
+    period: str = "all",
     db: Session = Depends(auth.get_tenant_db),
     current_user: models.User = Depends(auth.require_role("teacher")),
 ):
-    stats = teacher_analytics(section_id, db, current_user, subject)
+    stats = teacher_analytics(section_id, db, current_user, subject, period)
     
     output = io.StringIO()
     writer = csv.writer(output)
