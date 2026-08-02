@@ -900,6 +900,7 @@ class SchoolProfileRequest(BaseModel):
     school_name: str
     school_place: str
     academic_year_start_month: int  # 1-12
+    academic_year_end_month: int  # 1-12
 
 
 @app.get("/admin/school_profile")
@@ -915,6 +916,7 @@ def get_school_profile(
         "school_name": cfg.school_name if cfg else None,
         "school_place": cfg.school_place if cfg else None,
         "academic_year_start_month": cfg.academic_year_start_month if cfg else None,
+        "academic_year_end_month": cfg.academic_year_end_month if cfg else None,
         "configured": bool(cfg and cfg.school_name),
     }
 
@@ -931,6 +933,8 @@ def save_school_profile(
         raise HTTPException(status_code=400, detail="School place is required")
     if not (1 <= req.academic_year_start_month <= 12):
         raise HTTPException(status_code=400, detail="Academic year start month must be between 1 and 12")
+    if not (1 <= req.academic_year_end_month <= 12):
+        raise HTTPException(status_code=400, detail="Academic year end month must be between 1 and 12")
     cfg = db.query(models.SchoolProfile).first()
     if not cfg:
         cfg = models.SchoolProfile()
@@ -938,12 +942,14 @@ def save_school_profile(
     cfg.school_name = req.school_name.strip()
     cfg.school_place = req.school_place.strip()
     cfg.academic_year_start_month = req.academic_year_start_month
+    cfg.academic_year_end_month = req.academic_year_end_month
     db.commit()
     return {
         "message": "Saved",
         "school_name": cfg.school_name,
         "school_place": cfg.school_place,
         "academic_year_start_month": cfg.academic_year_start_month,
+        "academic_year_end_month": cfg.academic_year_end_month,
     }
 
 
@@ -2542,30 +2548,44 @@ def _check_report_access(db: Session, current_user: models.User, section_id: int
         raise HTTPException(status_code=403, detail="You are not assigned to this section/subject")
 
 
+def _academic_cycle(start_month: int, end_month: int, start_year: int):
+    """(year_start_date, year_end_exclusive_date, end_year) for ONE academic cycle that
+    begins start_month/1 of start_year. end_month &gt;= start_month means the cycle stays
+    within start_year (e.g. Jan-Dec); end_month &lt; start_month means it wraps into the
+    following year (e.g. Apr-Mar) — the common case for a real academic year."""
+    year_start_date = datetime.date(start_year, start_month, 1)
+    end_year = start_year if end_month >= start_month else start_year + 1
+    if end_month == 12:
+        year_end_exclusive = datetime.date(end_year + 1, 1, 1)
+    else:
+        year_end_exclusive = datetime.date(end_year, end_month + 1, 1)
+    return year_start_date, year_end_exclusive, end_year
+
+
 def _academic_year_range(db: Session):
     """(start, end, label) for the school's CURRENT ACADEMIC year — e.g. start_month=4
-    (April) means an academic year of Apr-through-Mar, and "today" in Feb 2026 falls in
-    the year that started Apr 2025. end is EXCLUSIVE (first instant of the next academic
-    year), matching _period_range's convention. Falls back to a plain Jan-Dec calendar
-    year if the school hasn't configured a SchoolProfile/start month yet."""
+    (April), end_month=3 (March) means an academic year of Apr-through-Mar, and "today"
+    in Feb 2026 falls in the cycle that started Apr 2025. end is EXCLUSIVE (first
+    instant of the next academic year), matching _period_range's convention. Falls back
+    to a plain Jan-Dec calendar year if the school hasn't configured a SchoolProfile /
+    start-end month yet. Assumes the configured start/end form one contiguous ~12-month
+    cycle (true for every real academic year) — an unusual configuration that leaves a
+    gap between cycles (e.g. start=April, end=June) isn't specially handled."""
     cfg = db.query(models.SchoolProfile).first()
     start_month = cfg.academic_year_start_month if cfg and cfg.academic_year_start_month else 1
+    end_month = cfg.academic_year_end_month if cfg and cfg.academic_year_end_month else 12
 
     today_start, today_end, local_today_start = _school_today_range(db)
     offset = local_today_start - today_start
     today_local_date = local_today_start.date()
 
-    if today_local_date.month >= start_month:
-        year_start_date = datetime.date(today_local_date.year, start_month, 1)
-        end_year = today_local_date.year + 1
-    else:
-        year_start_date = datetime.date(today_local_date.year - 1, start_month, 1)
-        end_year = today_local_date.year
-    year_end_date = datetime.date(end_year, start_month, 1)  # exclusive
+    year_start_date, year_end_exclusive, end_year = _academic_cycle(start_month, end_month, today_local_date.year)
+    if today_local_date < year_start_date:
+        year_start_date, year_end_exclusive, end_year = _academic_cycle(start_month, end_month, today_local_date.year - 1)
 
     start = datetime.datetime.combine(year_start_date, datetime.time.min) - offset
-    end = datetime.datetime.combine(year_end_date, datetime.time.min) - offset
-    label = str(year_start_date.year) if start_month == 1 else f"{year_start_date.year}-{year_end_date.year}"
+    end = datetime.datetime.combine(year_end_exclusive, datetime.time.min) - offset
+    label = str(year_start_date.year) if year_start_date.year == end_year else f"{year_start_date.year}-{end_year}"
     return start, end, label
 
 
@@ -2613,14 +2633,16 @@ def attendance_report_preview(
     section_id: int,
     period: str,
     subject: str = "All",
+    student_id: Optional[int] = None,
     db: Session = Depends(auth.get_tenant_db),
     current_user: models.User = Depends(auth.require_role("admin", "teacher")),
 ):
     """JSON version of the report — shows the data on-screen before the admin/teacher
-    commits to a CSV/PDF download."""
+    commits to a CSV/PDF download. student_id narrows to one student in the section;
+    omitted (the default) means every student in the section, unchanged."""
     _check_report_access(db, current_user, section_id, subject)
     start, end, label, _ = _resolve_report_range(db, period, None, None)
-    rows = _attendance_report_rows(db, section_id, start, end, subject)
+    rows = _attendance_report_rows(db, section_id, start, end, subject, student_id=student_id)
     school_name, school_place = _report_letterhead_lines(db)
     counts = {"present": 0, "absent": 0, "leave": 0}
     for r in rows:
@@ -2643,12 +2665,13 @@ def attendance_report_csv(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     subject: str = "All",
+    student_id: Optional[int] = None,
     db: Session = Depends(auth.get_tenant_db),
     current_user: models.User = Depends(auth.require_role("admin", "teacher")),
 ):
     _check_report_access(db, current_user, section_id, subject)
     start, end, range_label, filename_range = _resolve_report_range(db, period, start_date, end_date)
-    rows = _attendance_report_rows(db, section_id, start, end, subject)
+    rows = _attendance_report_rows(db, section_id, start, end, subject, student_id=student_id)
     school_name, school_place = _report_letterhead_lines(db)
 
     output = io.StringIO()
@@ -2728,12 +2751,13 @@ def attendance_report_pdf(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     subject: str = "All",
+    student_id: Optional[int] = None,
     db: Session = Depends(auth.get_tenant_db),
     current_user: models.User = Depends(auth.require_role("admin", "teacher")),
 ):
     _check_report_access(db, current_user, section_id, subject)
     start, end, range_label, filename_range = _resolve_report_range(db, period, start_date, end_date)
-    rows = _attendance_report_rows(db, section_id, start, end, subject)
+    rows = _attendance_report_rows(db, section_id, start, end, subject, student_id=student_id)
     school_name, school_place = _report_letterhead_lines(db)
     pdf_bytes = _build_attendance_pdf_bytes(
         rows, f"Section {section_id}  |  {range_label}  |  Subject: {subject}",

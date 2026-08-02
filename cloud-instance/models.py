@@ -331,10 +331,11 @@ class SchoolProfile(Base):
     id = Column(Integer, primary_key=True, index=True)
     school_name = Column(String, nullable=True)
     school_place = Column(String, nullable=True)
-    # Which calendar month the academic year begins (1-12, e.g. 4 for April) — lets
-    # "this academic year" be computed on the fly (e.g. Apr 2025-Mar 2026) without the
-    # admin ever having to update explicit start/end dates every year.
+    # Which calendar months the academic year begins/ends (1-12, e.g. 4=April start,
+    # 3=March end) — lets "this academic year" be computed on the fly (e.g. Apr
+    # 2025-Mar 2026) every year without the admin ever updating explicit dates.
     academic_year_start_month = Column(Integer, nullable=True)
+    academic_year_end_month = Column(Integer, nullable=True)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 

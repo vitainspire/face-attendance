@@ -2213,6 +2213,9 @@ document.getElementById('report_class').addEventListener('change', async (e) => 
     const cls = REPORT_CLASSES_CACHE.find(c => String(c.id) === e.target.value);
     const secSel = document.getElementById('report_section');
     secSel.innerHTML = '<option value="" disabled selected>Select a section...</option>';
+    // Reset directly (rebuilding secSel's options programmatically doesn't fire a
+    // native 'change' event, so report_section's own listener won't do this for us).
+    document.getElementById('report_student').innerHTML = '<option value="All" selected>All Students</option>';
     if (cls) {
         cls.sections.forEach(s => {
             const opt = document.createElement('option');
@@ -2249,9 +2252,12 @@ const REPORT_PERIOD_LABELS = { today: 'Today', week: 'Weekly', month: 'Monthly',
 function reportQueryString() {
     const sectionId = document.getElementById('report_section').value;
     const subject = document.getElementById('report_subject').value || 'All';
+    const studentId = document.getElementById('report_student').value;
     if (!sectionId) throw new Error('Select a class and section first.');
     if (!reportPeriod) throw new Error('Pick a time range (Today / Weekly / Monthly / Yearly) first.');
-    return `section_id=${sectionId}&period=${reportPeriod}&subject=${encodeURIComponent(subject)}`;
+    let qs = `section_id=${sectionId}&period=${reportPeriod}&subject=${encodeURIComponent(subject)}`;
+    if (studentId && studentId !== 'All') qs += `&student_id=${studentId}`;
+    return qs;
 }
 
 async function loadReportPreview() {
@@ -2268,6 +2274,11 @@ async function loadReportPreview() {
             `${data.period_label} (${data.start_date} to ${data.end_date}) — ` +
             `${data.rows.length} record${data.rows.length === 1 ? '' : 's'} — ` +
             `Present: ${data.counts.present}, Absent: ${data.counts.absent}, Leave: ${data.counts.leave}`;
+        const studentSel = document.getElementById('report_student');
+        const studentLabel = studentSel.value !== 'All' ? studentSel.options[studentSel.selectedIndex].textContent : null;
+        if (studentLabel) {
+            document.getElementById('report-preview-meta').innerText += `  —  Student: ${studentLabel}`;
+        }
         const tbody = document.getElementById('report-preview-rows');
         tbody.innerHTML = '';
         if (!data.rows.length) {
@@ -2299,9 +2310,31 @@ document.querySelectorAll('.report-period-btn').forEach(btn => {
         loadReportPreview();
     });
 });
-// Re-run the currently selected period whenever the section/subject changes underneath it.
-document.getElementById('report_section').addEventListener('change', () => { if (reportPeriod) loadReportPreview(); });
+// Populates the Student dropdown for the newly-selected section, then (like
+// subject) re-runs the currently selected period if one's already picked.
+document.getElementById('report_section').addEventListener('change', async (e) => {
+    const sectionId = e.target.value;
+    const studentSel = document.getElementById('report_student');
+    studentSel.innerHTML = '<option value="All" selected>All Students</option>';
+    if (sectionId) {
+        try {
+            const data = await api(`/admin/students?section_id=${sectionId}`);
+            data.students.forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s.id;
+                opt.textContent = `${s.name} (${s.roll_no})`;
+                studentSel.appendChild(opt);
+            });
+        } catch (_) {
+            // Leave just "All Students" if this fails — reports still work for the
+            // whole section, just without the per-student narrowing until retried.
+        }
+    }
+    if (reportPeriod) loadReportPreview();
+});
+// Re-run the currently selected period whenever subject/student changes underneath it.
 document.getElementById('report_subject').addEventListener('change', () => { if (reportPeriod) loadReportPreview(); });
+document.getElementById('report_student').addEventListener('change', () => { if (reportPeriod) loadReportPreview(); });
 
 document.getElementById('btn-report-csv').addEventListener('click', async () => {
     hide('report-error');
@@ -2729,6 +2762,7 @@ async function loadSchoolProfile() {
         document.getElementById('sp_school_name').value = data.school_name || '';
         document.getElementById('sp_school_place').value = data.school_place || '';
         document.getElementById('sp_academic_year_start_month').value = data.academic_year_start_month || 4;
+        document.getElementById('sp_academic_year_end_month').value = data.academic_year_end_month || 3;
     } catch (err) {
         document.getElementById('school-profile-error').innerText = errorMessage(err, 'Failed to load school profile');
         show('school-profile-error');
@@ -2744,6 +2778,7 @@ document.getElementById('btn-save-school-profile').addEventListener('click', asy
                 school_name: document.getElementById('sp_school_name').value,
                 school_place: document.getElementById('sp_school_place').value,
                 academic_year_start_month: parseInt(document.getElementById('sp_academic_year_start_month').value),
+                academic_year_end_month: parseInt(document.getElementById('sp_academic_year_end_month').value),
             },
         });
         document.getElementById('school-profile-success').innerText = 'Saved! This now appears on every attendance report.';
