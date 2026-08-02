@@ -700,8 +700,9 @@
 
                         <div id="gp-upload-pane">
                             <label for="group_photo" id="dropzone" class="dropzone">
-                                <span class="dropzone-icon">&#9730;</span>
+                                <span class="dropzone-icon" id="dropzone-icon">&#9730;</span>
                                 <span id="dropzone-text">Drag and drop your classroom photo here, or click to select.<br>Supported formats: JPG, PNG</span>
+                                <img id="dropzone-preview" alt="Selected classroom photo" class="hidden dropzone-preview-img">
                             </label>
                             <input type="file" id="group_photo" accept="image/*" style="position:absolute; width:1px; height:1px; opacity:0; overflow:hidden;">
                         </div>
@@ -715,12 +716,8 @@
                                 </div>
                             </div>
                             <canvas id="gp-capture-canvas" class="hidden"></canvas>
+                            <img id="gp-camera-preview" alt="Captured classroom photo" class="camera-feed hidden">
                             <button type="button" id="btn-gp-retake" class="secondary-btn hidden">Retake Photo</button>
-                        </div>
-
-                        <div id="gp-preview-wrap" class="hidden" style="margin-top:12px;">
-                            <p class="hint" style="margin-bottom:6px;">Selected photo:</p>
-                            <img id="gp-preview" alt="Selected classroom photo" style="max-width:100%; max-height:320px; border-radius:8px; border:1px solid var(--card-border); display:block;">
                         </div>
                     </div>
                     <div class="btn-row">

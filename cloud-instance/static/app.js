@@ -1657,21 +1657,28 @@ async function refreshPendingLeaveBadge() {
 // ===================== Teacher: classroom photo — upload OR camera, with preview =====================
 // Whichever source the teacher used (file picker, drag-drop, or camera capture) ends
 // up here as one Blob/File — the submit handler reads this instead of the raw file
-// input, since a camera capture never populates group_photo.files itself.
+// input, since a camera capture never populates group_photo.files itself. Each source
+// shows its own preview in place — the dropzone box itself becomes the photo once one
+// is picked, and the camera view becomes the captured shot once one is taken — rather
+// than a separate preview area appearing below.
 let selectedGroupPhotoBlob = null;
+let groupPhotoSource = null;  // 'upload' | 'camera' — which pane's preview is the active selection
 let gpCameraStream = null;
 
-function showGroupPhotoPreview(blobOrFile) {
-    const img = document.getElementById('gp-preview');
-    const wrap = document.getElementById('gp-preview-wrap');
-    if (!img || !wrap) return;
-    img.src = URL.createObjectURL(blobOrFile);
-    wrap.classList.remove('hidden');
+function resetDropzonePreview() {
+    const img = document.getElementById('dropzone-preview');
+    if (img) { img.classList.add('hidden'); img.src = ''; }
+    show('dropzone-icon');
+    show('dropzone-text');
 }
 
 function clearGroupPhotoSelection() {
     selectedGroupPhotoBlob = null;
-    hide('gp-preview-wrap');
+    groupPhotoSource = null;
+    resetDropzonePreview();
+    const camImg = document.getElementById('gp-camera-preview');
+    if (camImg) { camImg.classList.add('hidden'); camImg.src = ''; }
+    hide('btn-gp-retake');
     const fileInput = document.getElementById('group_photo');
     if (fileInput) fileInput.value = '';
 }
@@ -1679,14 +1686,17 @@ function clearGroupPhotoSelection() {
 (function () {
     const dropzone = document.getElementById('dropzone');
     const fileInput = document.getElementById('group_photo');
-    const text = document.getElementById('dropzone-text');
     if (!dropzone || !fileInput) return;
 
     function useFile() {
         if (fileInput.files && fileInput.files.length) {
-            text.textContent = fileInput.files[0].name;
             selectedGroupPhotoBlob = fileInput.files[0];
-            showGroupPhotoPreview(selectedGroupPhotoBlob);
+            groupPhotoSource = 'upload';
+            const img = document.getElementById('dropzone-preview');
+            img.src = URL.createObjectURL(selectedGroupPhotoBlob);
+            img.classList.remove('hidden');
+            hide('dropzone-icon');
+            hide('dropzone-text');
         }
     }
     fileInput.addEventListener('change', useFile);
@@ -1728,11 +1738,21 @@ function showGpCameraTab() {
     document.getElementById('gp-tab-upload').classList.replace('primary-btn', 'secondary-btn');
     hide('gp-upload-pane');
     show('gp-camera-pane');
-    // Reset the camera pane back to its "not started yet" state every time it's opened.
-    show('gp-camera-live');
-    hide('btn-gp-capture');
-    show('btn-gp-start-cam');
-    hide('btn-gp-retake');
+    if (groupPhotoSource === 'camera' && selectedGroupPhotoBlob) {
+        // A capture from earlier in this same session is still the active selection —
+        // show it (with Retake available) instead of resetting to a fresh live view.
+        hide('gp-camera-live');
+        show('gp-camera-preview');
+        show('btn-gp-retake');
+    } else {
+        // Not started yet, or the active selection came from the upload tab instead —
+        // leave THAT selection alone and just present a fresh camera view here.
+        show('gp-camera-live');
+        hide('gp-camera-preview');
+        hide('btn-gp-capture');
+        show('btn-gp-start-cam');
+        hide('btn-gp-retake');
+    }
 }
 
 document.getElementById('gp-tab-upload').addEventListener('click', showGpUploadTab);
@@ -1758,7 +1778,10 @@ document.getElementById('btn-gp-capture').addEventListener('click', async () => 
     canvas.getContext('2d').drawImage(video, 0, 0);
     const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
     selectedGroupPhotoBlob = blob;
-    showGroupPhotoPreview(blob);
+    groupPhotoSource = 'camera';
+    const img = document.getElementById('gp-camera-preview');
+    img.src = URL.createObjectURL(blob);
+    img.classList.remove('hidden');
     stopGpCamera();
     hide('gp-camera-live');
     show('btn-gp-retake');
@@ -1993,7 +2016,6 @@ document.getElementById('btn-submit-final').addEventListener('click', async () =
         // Reset the form to a fresh state as requested by the user
         document.getElementById('attendance-form').reset();
         clearGroupPhotoSelection();
-        document.getElementById('dropzone-text').textContent = 'Drag and drop your classroom photo here, or click to select.';
         showGpUploadTab();
         hide('attendance-result');
         hide('absent-box');

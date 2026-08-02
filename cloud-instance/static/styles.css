@@ -491,6 +491,12 @@ button.accent-btn:hover {
     font-size: 0.9rem;
     line-height: 1.5;
 }
+.dropzone-preview-img {
+    max-width: 100%;
+    max-height: 320px;
+    border-radius: 10px;
+    object-fit: contain;
+}
 
 /* ===================== Cards ===================== */
 .result-box {
