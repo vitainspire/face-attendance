@@ -99,7 +99,11 @@ async function populateFlatSectionDropdown(selectId, endpoint = '/admin/classes'
 }
 
 async function populateAdminFlatDropdowns() {
-    await Promise.all(['reg_section', 'edit_section'].map(populateFlatSectionDropdown));
+    // NOT .map(populateFlatSectionDropdown) directly — Array.map calls its callback
+    // with (element, index, array), and since this function now takes an optional
+    // second `endpoint` argument, that would pass the array INDEX (0, 1) as endpoint
+    // instead of letting it default, producing a malformed request URL.
+    await Promise.all(['reg_section', 'edit_section'].map(id => populateFlatSectionDropdown(id)));
 }
 
 async function populateTeacherFlatDropdowns() {
