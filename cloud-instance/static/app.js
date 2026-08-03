@@ -1813,6 +1813,15 @@ let currentRoster = [];
 let HIGH_CONF = 0.90;   // only >= this is auto-checked as present — school-configurable,
                         // refreshed from /recognition_settings each time a photo is scanned
 
+// Live "Present"/"Absent" counts — recomputed from whichever boxes are ACTUALLY
+// checked right now, so they always reflect the teacher's corrections, not just the
+// scan's original guess. "Detected"/"Unrecognized" stay as the scan's own snapshot.
+function updatePresentAbsentStats() {
+    const checkedCount = document.querySelectorAll('.att-checkbox:checked').length;
+    setText('stat-recognized', checkedCount);
+    setText('stat-absent', currentRoster.length - checkedCount);
+}
+
 function renderAttendanceChecklist(roster, faceInfo) {
     const container = document.getElementById('attendance-checklist');
     container.innerHTML = '';
@@ -1822,9 +1831,6 @@ function renderAttendanceChecklist(roster, faceInfo) {
         const cropHtml = info && info.crop
             ? `<img src="${info.crop}" class="face-crop ${checked ? 'ok' : ''}" alt="${escapeHtml(s.name)}">`
             : '<span class="face-crop face-crop-empty">—</span>';
-        const scoreHtml = info
-            ? `<span class="score">confidence ${(info.score * 100).toFixed(0)}%</span>`
-            : '<span class="hint">not detected</span>';
         // A detected face (any confidence, including auto-checked high-confidence ones)
         // might still be the WRONG person — this lets the teacher hand it to whoever it
         // actually is, the same way an unmatched face already can be assigned below.
@@ -1844,10 +1850,14 @@ function renderAttendanceChecklist(roster, faceInfo) {
             <span class="manual-face-meta">
                 <b>${escapeHtml(s.name)}</b>
                 <span class="score">${escapeHtml(s.roll_no)}</span>
-                ${scoreHtml}
             </span>
             ${reassignHtml}`;
         container.appendChild(li);
+    });
+
+    // Live-updates on every checkbox toggle (event delegation — covers boxes re-rendered later too).
+    container.addEventListener('change', (e) => {
+        if (e.target.classList.contains('att-checkbox')) updatePresentAbsentStats();
     });
 
     container.querySelectorAll('.reassign-select').forEach(sel => {
@@ -1860,8 +1870,11 @@ function renderAttendanceChecklist(roster, faceInfo) {
             if (fromBox) fromBox.checked = false;
             if (toBox) toBox.checked = true;
             sel.value = '';
+            updatePresentAbsentStats();  // programmatic .checked changes don't fire 'change'
         });
     });
+
+    updatePresentAbsentStats();
 }
 
 function renderUnmatchedFaces(faces) {
@@ -1935,11 +1948,10 @@ document.getElementById('attendance-form').addEventListener('submit', async (e) 
 
         const faceInfo = {};      // student_id -> {checked, crop, score}
         const unmatchedFaces = []; // faces with no confident guess at all
-        let recognized = 0, unknown = 0;
+        let unknown = 0;
 
         data.results.forEach((res, idx) => {
             if (res.status === 'recognized' && res.score >= HIGH_CONF) {
-                recognized++;
                 faceInfo[res.student_id] = { checked: true, crop: res.crop, score: res.score };
             } else {
                 unknown++;
@@ -1952,11 +1964,10 @@ document.getElementById('attendance-form').addEventListener('submit', async (e) 
             }
         });
 
-        renderAttendanceChecklist(currentRoster, faceInfo);
+        renderAttendanceChecklist(currentRoster, faceInfo);  // sets stat-recognized/stat-absent live
         renderUnmatchedFaces(unmatchedFaces);
 
         setText('stat-detected', data.total_detected);
-        setText('stat-recognized', recognized);
         setText('stat-unknown', unknown);
     } catch (err) {
         hide('loading');
@@ -1976,9 +1987,9 @@ document.getElementById('btn-mark-all-present').addEventListener('click', async 
         currentRoster = rosterData.students;
         renderAttendanceChecklist(currentRoster, {});           // nobody pre-checked...
         document.querySelectorAll('.att-checkbox').forEach(cb => cb.checked = true);  // ...then check everyone
+        updatePresentAbsentStats();  // programmatic .checked changes above don't fire 'change'
         renderUnmatchedFaces([]);
         setText('stat-detected', 0);
-        setText('stat-recognized', currentRoster.length);
         setText('stat-unknown', 0);
         show('attendance-result');
     } catch (err) {
@@ -1988,9 +1999,11 @@ document.getElementById('btn-mark-all-present').addEventListener('click', async 
 
 document.getElementById('btn-select-all').addEventListener('click', () => {
     document.querySelectorAll('.att-checkbox').forEach(cb => cb.checked = true);
+    updatePresentAbsentStats();
 });
 document.getElementById('btn-deselect-all').addEventListener('click', () => {
     document.querySelectorAll('.att-checkbox').forEach(cb => cb.checked = false);
+    updatePresentAbsentStats();
 });
 
 document.getElementById('btn-submit-final').addEventListener('click', async () => {
